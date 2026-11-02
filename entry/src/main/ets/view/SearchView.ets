@@ -819,7 +819,9 @@ export struct SearchView {
       return;
     }
     if (r.kind === KIND_PAD) {
-      Nav.pushPad(new PadNavParam(r.padId, r.primary));
+      // 搜索结果的 padId 一定拿得到（pads.json 每条都带 id），所以第三参 place 传空串：
+      // 按 id 精确匹配就够了，不需要再走「名字 + 发射场」那条消歧路径。
+      Nav.pushPad(new PadNavParam(r.padId, r.primary, ''));
     }
   }
 

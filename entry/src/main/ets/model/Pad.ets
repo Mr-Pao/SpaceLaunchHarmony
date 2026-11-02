@@ -16,9 +16,15 @@
  *   3. 计数字段只有两个：工位级 `total_launch_count` 与发射场级
  *      `location.total_launch_count`（没有 pad 自己的 orbital/orbital_attempt 系列）。
  *
- * 前缀约定：一律 `Pd*`，与工程已占用的 Rk*/Rt*/Gl*/St*/Ne*/Sa*/Ev*/Mn*/Se*/Vd* 无冲突；
+ * 前缀约定：一律 `Pd` 开头（Pd 为工位专用前缀）。工程已占用的前缀有 Rk、Rt、Gl、
+ * St、Ne、Sa、Ev、Mn、Se、Vd，都不冲突；
  * 也刻意不复用 model/Common.ets 的 LaunchPad —— 那个是绑定在发射记录里的精简副本，
  * 没有 agencies 数组，硬套会丢字段。
+ *
+ * ⚠ 本仓库踩过一次坑：在块注释里写「前缀名 + 星号 + 斜杠」的组合（例如
+ *   把 Rk 星号、Rt 星号连排）会命中块注释的结束记号，令注释提前闭合，
+ *   后面整段变成代码，编译器报一堆 Invalid character。
+ *   写前缀清单一律用顿号隔开，不要给前缀加星号。
  */
 
 import { BasePayload } from './Common';

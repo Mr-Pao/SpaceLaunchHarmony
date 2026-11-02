@@ -141,10 +141,20 @@ export class AgencyNavParam {
 export class PadNavParam {
   id: string = '';
   name: string = '';
+  /**
+   * 发射场名（= pads 里 pad.location.name 的原文）。
+   *
+   * 为什么需要它：LL2 的发射记录里 pad 对象**不带 id**，只能拿 name 去 pads 数据集
+   * 反查；而 pads.json 里 `name` 为 "Unknown Pad" 的多达数条（不同发射场各一条），
+   * 光按 name 精确匹配会稳定命中第一条（Sea Launch），点 Mahia 会跳到夏威夷。
+   * 所以带上 location.name 做二次消歧。空串表示调用方没有场地信息。
+   */
+  place: string = '';
 
-  constructor(id: string, name: string) {
+  constructor(id: string, name: string, place: string) {
     this.id = id;
     this.name = name;
+    this.place = place;
   }
 }
 

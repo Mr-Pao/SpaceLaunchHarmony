@@ -60,8 +60,11 @@ const OK_GREEN: string = '#34D399';
 
 const HERO_H: number = 200;
 const PAGE_PAD: number = 12;
-/** 悬浮胶囊 TabBar 盖在 NavDestination 之上，留够底距最后一张卡才不被吃 */
-const BOTTOM_PAD: number = 120;
+/**
+ * 底部留白。本页是 NavDestination 二级页，打开时悬浮胶囊已被摘掉，
+ * 不需要让位 92~120，32 只够滑到底时最后一行不贴边。
+ */
+const BOTTOM_PAD: number = 32;
 
 /** 简介折叠：4 行 + 120 字阈值（拿不到 Text 实际行数，只能按字符数粗判） */
 const DESC_FOLD_LINES: number = 4;
@@ -116,6 +119,12 @@ export struct PadView {
   @Prop padId: string = '';
   /** 兜底：拿不到 id 时按名字匹配（发射详情页只带工位名） */
   @Prop padName: string = '';
+  /**
+   * 发射场名，配合 padName 做二次消歧。
+   * pads.json 里 `name` 为 "Unknown Pad" 的有好几条（不同发射场各一条），
+   * 只按 name 匹配会稳定命中第一条，点 Mahia 会跳到 Sea Launch。
+   */
+  @Prop padPlace: string = '';
 
   // ============ 页面状态 ============
 
@@ -247,7 +256,7 @@ export struct PadView {
     if (target.length > 0) {
       for (let i = 0; i < list.length; i++) {
         const item: PdPad = list[i];
-        if (item !== undefined && String(item.id) === target) {
+        if (String(item.id) === target) {
           return item;
         }
       }
@@ -257,16 +266,44 @@ export struct PadView {
     if (want.length === 0) {
       return null;
     }
+    const wantPlace: string = strOf(this.padPlace).trim().toLowerCase();
+
+    // 第一轮：名字 + 发射场双命中。这是唯一能区分同名工位的判据
+    if (wantPlace.length > 0) {
+      for (let i = 0; i < list.length; i++) {
+        const item: PdPad = list[i];
+        if (strOf(item.name).trim().toLowerCase() === want && this.placeOf(item) === wantPlace) {
+          return item;
+        }
+      }
+    }
+
+    // 第二轮：只按名字。走到这里说明调用方没给场地，或者场地串与数据略有出入。
+    // 优先挑「不是 Unknown Pad」的那种：能显出真名的记录信息量一定更高，
+    // 同名且都叫 Unknown Pad 时至少不会退回第一条。
+    let fallback: PdPad | null = null;
     for (let i = 0; i < list.length; i++) {
       const item: PdPad = list[i];
-      if (item === undefined) {
+      if (strOf(item.name).trim().toLowerCase() !== want) {
         continue;
       }
-      if (strOf(item.name).trim().toLowerCase() === want) {
+      if (fallback === null) {
+        fallback = item;
+      }
+      if (want !== 'unknown pad') {
         return item;
       }
     }
-    return null;
+    return fallback;
+  }
+
+  /** 取一条记录里的发射场名（小写、去空白），供同名消歧用 */
+  private placeOf(item: PdPad): string {
+    const loc: PdLocation | undefined = item.location;
+    if (loc === undefined) {
+      return '';
+    }
+    return strOf(loc.name).trim().toLowerCase();
   }
 
   /** 一条记录 → 页面状态。所有字段都过一遍空值判定，不留 undefined 到 UI */
@@ -359,9 +396,6 @@ export struct PadView {
     let fallbackName: string = '';
     for (let i = 0; i < this.refAgencies.length; i++) {
       const ref: PdAgencyRef = this.refAgencies[i];
-      if (ref === undefined) {
-        continue;
-      }
       const n: number = ref.id;
       if (n > 0 && Math.floor(n) === n) {
         idNum = n;
@@ -502,7 +536,7 @@ export struct PadView {
     }
     .width('100%')
     .alignItems(VerticalAlign.Center)
-    .padding({ left: PAGE_PAD, right: PAGE_PAD })
+    // 左右内边距由根容器统一给（PAGE_PAD），这里再加一次会变成 24
     .backgroundColor(BG_PRIMARY)
   }
 
@@ -873,7 +907,7 @@ export struct PadView {
       }
       if (showRetry) {
         Row() {
-          Text('网络异常，点击重试')
+          Text('重试')
             .fontSize(12.5)
             .fontColor(ACCENT)
         }

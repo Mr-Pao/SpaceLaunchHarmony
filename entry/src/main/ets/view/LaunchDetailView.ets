@@ -1839,6 +1839,8 @@ export struct LaunchDetailView {
 
       // 工位名可点：LL2 的 pad 对象没带 id，只能拿名字去 pads 数据集里反查，
       // 所以入参的 id 传空串、由 PadView 自己按 name 匹配。
+      // 但 name 不够：pads.json 里叫 "Unknown Pad" 的有好几条（不同发射场各一条），
+      // 所以把 pad.location.name 一并传下去做二次消歧，否则点 Mahia 会跳到 Sea Launch。
       Row() {
         Text(this.padName())
           .fontSize(15)
@@ -1858,7 +1860,7 @@ export struct LaunchDetailView {
         if (this.padName().length === 0) {
           return;
         }
-        Nav.pushPad(new PadNavParam('', this.padName()));
+        Nav.pushPad(new PadNavParam('', this.padName(), this.padPlace()));
       })
 
       if (this.padPlace().length > 0) {

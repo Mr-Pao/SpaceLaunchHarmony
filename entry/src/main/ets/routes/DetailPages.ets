@@ -14,7 +14,7 @@
  */
 
 import { Nav } from './Nav';
-import { LaunchNavParam, PhotoNavParam, RocketNavParam, ArticleNavParam, AstronautNavParam, SearchNavParam, VideoNavParam } from './NavParam';
+import { LaunchNavParam, PhotoNavParam, RocketNavParam, ArticleNavParam, AstronautNavParam, SearchNavParam, VideoNavParam, AgencyNavParam, PadNavParam } from './NavParam';
 import { RocketDetailView } from '../view/RocketDetailView';
 import { PhotoDetailView } from '../view/PhotoDetailView';
 import { LaunchDetailView } from '../view/LaunchDetailView';
@@ -28,6 +28,8 @@ import { FavoritesView } from '../view/FavoritesView';
 import { AstronautView } from '../view/AstronautView';
 import { SearchView } from '../view/SearchView';
 import { VideoGalleryView } from '../view/VideoGalleryView';
+import { AgencyView } from '../view/AgencyView';
+import { PadView } from '../view/PadView';
 
 const BG: string = '#0A0E17';
 const CARD: string = '#141A26';
@@ -324,6 +326,52 @@ export function SearchPage(name: string, param: object) {
 export function VideoGalleryPage(name: string, param: object) {
   NavDestination() {
     VideoGalleryView({ initialUrl: (param as VideoNavParam).launchId })
+  }
+  .hideTitleBar(true)
+  .backgroundColor(BG)
+  .onShown(() => {
+    Nav.markDetailShown();
+  })
+  .onHidden(() => {
+    Nav.markDetailHidden();
+  })
+}
+
+/**
+ * 机构详情。
+ *
+ * 双入参：LL2 的 agencies.json 里 id 是 number，但从发射数据带出来的往往只有名字，
+ * 所以 id 拿不到就传空串，由 AgencyView 自己按 name 反查。
+ */
+@Builder
+export function AgencyPage(name: string, param: object) {
+  NavDestination() {
+    AgencyView({
+      agencyId: (param as AgencyNavParam).id,
+      agencyName: (param as AgencyNavParam).name
+    })
+  }
+  .hideTitleBar(true)
+  .backgroundColor(BG)
+  .onShown(() => {
+    Nav.markDetailShown();
+  })
+  .onHidden(() => {
+    Nav.markDetailHidden();
+  })
+}
+
+/**
+ * 工位详情。同上：发射详情的 pad 对象不带 id，只能靠名字反查。
+ */
+@Builder
+export function PadPage(name: string, param: object) {
+  NavDestination() {
+    PadView({
+      padId: (param as PadNavParam).id,
+      padName: (param as PadNavParam).name,
+      padPlace: (param as PadNavParam).place
+    })
   }
   .hideTitleBar(true)
   .backgroundColor(BG)

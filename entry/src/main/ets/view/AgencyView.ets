@@ -65,9 +65,10 @@ const HERO_H: number = 200;
 const PAGE_PAD: number = 12;
 /**
  * 底部 120：详情页不是 tab 页，但悬浮胶囊（TabBar）仍盖在 NavDestination 之上，
- * 留够高度最后一张卡才不会被吃掉。FavoritesView 同值。
+ * 本页是 NavDestination 二级页，打开时悬浮胶囊已被 Nav.markDetailShown() 摘掉，
+ * 所以不需要按 tab 根页那样让位 92~120；32 只够滑到底时最后一行不贴边。
  */
-const BOTTOM_PAD: number = 120;
+const BOTTOM_PAD: number = 32;
 
 /** 简介折叠：4 行 + 120 字阈值（拿不到 Text 实际行数，只能按字符数粗判） */
 const DESC_FOLD_LINES: number = 4;
@@ -336,7 +337,7 @@ export struct AgencyView {
     if (target.length > 0) {
       for (let i = 0; i < list.length; i++) {
         const item: AgAgency = list[i];
-        if (item !== undefined && String(item.id) === target) {
+        if (String(item.id) === target) {
           return item;
         }
       }
@@ -348,9 +349,6 @@ export struct AgencyView {
     }
     for (let i = 0; i < list.length; i++) {
       const item: AgAgency = list[i];
-      if (item === undefined) {
-        continue;
-      }
       if (strOf(item.name).trim().toLowerCase() === want) {
         return item;
       }
@@ -494,7 +492,7 @@ export struct AgencyView {
     }
     .width('100%')
     .alignItems(VerticalAlign.Center)
-    .padding({ left: PAGE_PAD, right: PAGE_PAD })
+    // 左右内边距由根容器统一给（PAGE_PAD），这里再加一次会变成 24
     .backgroundColor(BG_PRIMARY)
   }
 
@@ -785,7 +783,7 @@ export struct AgencyView {
       }
       if (showRetry) {
         Row() {
-          Text('网络异常，点击重试')
+          Text('重试')
             .fontSize(12.5)
             .fontColor(ACCENT)
         }
