@@ -1602,20 +1602,25 @@ export struct LaunchView {
       } else {
         this.statRow()
 
-        // 「下次发射」大卡：只挂在待发射分段、且确实挑得出来时。
-        // 小程序 index.vue 也是这个位置 —— stat 行下面、列表上面，
-        // 卡片自己带秒级倒计时，所以列表卡就完全不需要倒计时了。
-        if (this.activeTab === TAB_UPCOMING && this.nextItem.id.length > 0) {
+        // 「下次发射」大卡：待发射分段、挑得出来、列表非空、且没开筛选时才挂。
+        //
+        // 对位小程序 pages/index/index.vue:99 的
+        //   v-if="nextLaunch && visible.length && !hasFilter"
+        // 四个条件缺一不可：
+        //   · 有下次发射
+        //   · 列表非空（否则卡还在、列表空着，页面看着像加载失败）
+        //   · 没开筛选 —— 用户已在找具体的某几次发射，倒计时只会把结果往下挤；
+        //     hasFilter() 同时含关键词与三维筛选，一个条件覆盖两种状态
+        // **不传 more**：小程序发射页那张卡是
+        //   `<next-launch :item="nextLaunch" @select="goDetail" />`
+        // 没有 more 开关（这页本来就是全部发射，「更多发射」无处可去）。
+        // more 只有今日页那张卡才有。
+        if (this.activeTab === TAB_UPCOMING && this.nextItem.id.length > 0 &&
+          this.filteredList().length > 0 && !this.hasFilter()) {
           NextLaunch({
             item: this.nextItem,
-            more: true,
             onSelect: (picked: LaunchSummary) => {
               this.openLaunch(picked);
-            },
-            onMore: () => {
-              // 小程序这里切到发射列表底部（scrollTo 下一张），鸿蒙侧列表本来就在下面，
-              // 把顶部的筛选/分段让出来后直接滚到列表首项即可。
-              this.scroller.scrollToIndex(0);
             }
           })
             .margin({ bottom: 10 })

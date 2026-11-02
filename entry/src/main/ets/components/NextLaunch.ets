@@ -4,39 +4,35 @@
  * 对位小程序：components/next-launch/next-launch.vue（246 行）
  *   template   1-37   （hero 图 / 状态徽章 / 标题 / 机构·场地 / 倒计时 / 时间 + 出口）
  *   script    39-81   （title / status / provider / padName / metaText / timeText）
- *   style     83-246  （.nl / .nl-hover / .nl-hero / .nl-mask / .nl-badge.* /
- *                       .nl-body / .nl-title / .nl-meta / .nl-cd / .nl-foot / .nl-more）
+ *   style     83-246  （.nl / .nl-hero / .nl-mask / .nl-badge.* / .nl-body /
+ *                       .nl-title / .nl-meta / .nl-cd / .nl-foot / .nl-more）
  * 外层容器对位 pages/today/today.vue 59-74 行（.next-wrap + .sec-head）
  *
  * 换算：rpx ÷ 2 = vp
  *   图片区 300rpx → 150vp；圆角 24rpx → 12vp；标题 34rpx → 17vp；
- *   机构行 24rpx → 12vp；时间 23rpx → 11.5vp；内边距 28rpx → 14vp
+ *   机构行 24rpx → 12vp；时间 23rpx → 11.5vp；内边距 28rpx → 14vp；
+ *   徽章 left/top 24rpx → 12vp；徽章字号 22rpx → 11vp；渐隐层 140rpx → 70vp
+ *
+ * ⚠ 2026-11-03 按小程序原图重排过一次，别再凭印象改：
+ *   之前的版本把状态徽章和倒计时一起压在图片底部、标题只留任务名、
+ *   还多画了一行火箭型号 —— 与小程序差了整整一个版式。现在的结构与 vue 一一对应：
+ *     图片（徽章在**左上角**，实心高饱和底）
+ *     正文：标题（型号 | 任务名，两行）/ 国旗 + 机构·场地 / 倒计时（lg 档）/
+ *           分隔线 + 发射时间 + 「查看详情 ›」+「更多发射 ›」
  *
  * 有意差异（相对 next-launch.vue）：
- *   1. **不显示国旗图片**：小程序用 flagSrc() 拼一张国旗 png，鸿蒙侧还没有
- *      国旗资源，`$r('app.media.flag_*')` 会直接编译失败（资源 id 不存在）。
- *      按「机构 · 场地」一行文字呈现，补资源后再加 Image。
- *   2. 倒计时放在**图片底部叠层右侧**（任务书第 1 条要求），而不是像 vue 那样
- *      在正文里另起一行。理由：两个位置都放 = 两个 Countdown 实例 = 两个
- *      每秒定时器；图片右侧已经够用，正文不再重复。
- *   3. 状态 chip 改成「淡色底 + 同色字」（statusToneBg / statusToneColor），
- *      不复刻 vue 的高饱和实心块：实心块在 150vp 的深色头图上太抢，且
- *      ArkUI 没有 backdrop-filter，实心块边缘会和图片硬切。
- *   4. 「更多发射 ›」出口没做：今日页需要它，但那是父级路由的事，组件只管
- *      回调。onSelect 给整卡点击、onMore 留给父级决定要不要显示（默认空实现）。
- *   5. 卡片常驻 opacity 0.92：vue 是 hover-class 的按下态，ArkUI 无 hover-class，
- *      第一阶段用静态透明度近似（要真按下态得引 stateStyles，先不引）。
- *   6. 无数据时渲染「暂无待发任务」占位块（vue 里该卡由父级 v-if 控制、
+ *   1. 国旗用 emoji（flagOf 返回 emoji），不是 png：鸿蒙侧没有 /static/flags/*.png。
+ *   2. 卡片不做 hover 按下态（ArkUI 无 hover-class），要按下态得引 stateStyles。
+ *   3. 无数据时渲染「暂无待发任务」占位块（vue 里该卡由父级 v-if 控制、
  *      组件自己从不处理空数据）。占位块保持同样高度，父级换数据时页面不跳。
  *
  * ⚠ 本文件不使用 console.*，日志一律 hilog。
  */
 
 import { hilog } from '@kit.PerformanceAnalysisKit';
-import { LaunchSummary } from '../model/Common';
+import { LaunchProvider, LaunchSummary } from '../model/Common';
 import {
-  strOf, formatLaunchTime, statusOf, statusToneColor, statusToneBg,
-  missionLabelOf, rocketLabelOf, providerLabelOf, placeLabelOf
+  strOf, formatDateTime, statusOf, launchTitle, providerLabelOf, placeLabelOf, flagOf
 } from '../utils/Format';
 import { Countdown } from './Countdown';
 
@@ -95,25 +91,24 @@ export struct NextLaunch {
     return strOf(this.item.imageThumb);
   }
 
+  /** 标题 = 型号 | 任务名（对位 vue 的 launchTitle(item)） */
   private titleText(): string {
-    return missionLabelOf(this.item);
-  }
-
-  private rocketText(): string {
-    return rocketLabelOf(this.item);
-  }
-
-  private placeText(): string {
-    return placeLabelOf(this.item);
+    return launchTitle(this.item);
   }
 
   private providerText(): string {
     return providerLabelOf(this.item);
   }
 
-  private timeText(): string {
-    const t: string = formatLaunchTime(strOf(this.item.net));
-    return t.length > 0 ? ('发射时间 ' + t) : '发射时间待定';
+  private placeText(): string {
+    return placeLabelOf(this.item);
+  }
+
+  /** 国旗 emoji：与 vue 一样用机构**英文原名**认国家 */
+  private flagText(): string {
+    const p: LaunchProvider | undefined = this.item.launch_service_provider;
+    const raw: string = p === undefined || p === null ? '' : strOf(p.name);
+    return flagOf(raw);
   }
 
   /** 「机构 · 场地」：任一侧为空就不留分隔符（对位 vue 的 metaText） */
@@ -129,18 +124,54 @@ export struct NextLaunch {
     return loc;
   }
 
+  private timeText(): string {
+    const t: string = formatDateTime(strOf(this.item.net));
+    return t.length > 0 ? ('发射时间 ' + t) : '发射时间待定';
+  }
+
   // 状态三件套各自取一次：@Builder 里不能声明局部变量，
   // 所以拆成三个方法，由调用处分别取（statusOf 是纯函数，重复调用无副作用）
   private statusText(): string {
     return statusOf(this.item).text;
   }
 
-  private statusColor(): string {
-    return statusToneColor(statusOf(this.item).tone);
+  /**
+   * 徽章底色 —— **实心高饱和**，对位 .nl-badge.pending / .success / .failure / .flying / .normal。
+   *
+   * 这里不复用 Format 的 statusToneBg：那套是「淡色底 + 同色字」的列表 chip 口径，
+   * 而大卡上的徽章压在实拍图上是另一套视觉（vue 用 rgba(...,0.9) 的近实心块）。
+   * ArkUI 没有 backdrop-filter，实心块比半透明更稳。
+   */
+  private badgeBg(): string {
+    const tone: string = statusOf(this.item).tone;
+    if (tone === 'success') {
+      return '#EB34C759'; // rgba(52,199,89,0.92)
+    }
+    if (tone === 'failure') {
+      return '#EBFF3B30'; // rgba(255,59,48,0.92)
+    }
+    if (tone === 'flying') {
+      return '#EBF5C33B'; // rgba(245,195,59,0.92)
+    }
+    if (tone === 'go') {
+      return '#E638BDF8'; // rgba(56,189,248,0.9)
+    }
+    return '#D9FFFFFF'; // rgba(255,255,255,0.85)
   }
 
-  private statusBg(): string {
-    return statusToneBg(statusOf(this.item).tone);
+  /** 徽章文字色：深底浅字、浅底深字（对位 vue 的 color 声明） */
+  private badgeColor(): string {
+    const tone: string = statusOf(this.item).tone;
+    if (tone === 'failure') {
+      return '#FFFFFF';
+    }
+    if (tone === 'flying') {
+      return '#241A00';
+    }
+    if (tone === 'pending') {
+      return '#141A26';
+    }
+    return '#04121F';
   }
 
   // ============ 区块头 ============
@@ -161,7 +192,7 @@ export struct NextLaunch {
 
   // ============ 图片区 ============
 
-  /** 图底部渐变压黑，让 chip / 倒计时不直接压在原图上（对位 .nl-mask 140rpx→70vp） */
+  /** 图底部渐变压黑，让正文与图片过渡自然（对位 .nl-mask 140rpx → 70vp） */
   @Builder
   heroMask() {
     Column()
@@ -206,31 +237,16 @@ export struct NextLaunch {
     }
   }
 
-  /** 图片底部那一行：状态 chip（左）+ 倒计时（右） */
+  /** 状态徽章：压在图片**左上角**（对位 .nl-badge 的 left/top 24rpx） */
   @Builder
-  heroOverlay() {
-    Row() {
-      Text(this.statusText())
-        .fontSize(11) // 22rpx ÷ 2
-        .fontColor(this.statusColor())
-        .padding({ left: 9, right: 9, top: 3, bottom: 3 }) // 18rpx/6rpx ÷ 2
-        .borderRadius(4) // 8rpx ÷ 2
-        .backgroundColor(this.statusBg())
-        .maxLines(1)
-
-      Blank()
-
-      // 宽度给死 168：Countdown 是 width('100%') 的四等分布局，
-      // 不给容器宽度它会和 chip 抢满整行，把 chip 挤成竖排
-      Column() {
-        Countdown({ net: strOf(this.item.net), sizeMode: 'md', showLabel: true })
-      }
-      .width(168)
-      .alignItems(HorizontalAlign.End)
-    }
-    .width('100%')
-    .padding({ left: 12, right: 12, bottom: 6, top: 6 })
-    .alignItems(VerticalAlign.Center)
+  statusBadge() {
+    Text(this.statusText())
+      .fontSize(11) // 22rpx ÷ 2
+      .fontColor(this.badgeColor())
+      .padding({ left: 9, right: 9, top: 3, bottom: 3 }) // 18rpx / 6rpx ÷ 2
+      .borderRadius(4) // 8rpx ÷ 2
+      .backgroundColor(this.badgeBg())
+      .maxLines(1)
   }
 
   // ============ 正文 ============
@@ -241,35 +257,48 @@ export struct NextLaunch {
       .fontSize(17) // 34rpx ÷ 2
       .fontWeight(FontWeight.Bold)
       .fontColor('#FFFFFF')
-      .lineHeight(24)
+      .lineHeight(24) // 1.4 倍行高
       .maxLines(2)
       .textOverflow({ overflow: TextOverflow.Ellipsis })
       .width('100%')
   }
 
+  /**
+   * 机构 · 场地行（对位 .nl-meta）。
+   *
+   * 国旗与文字必须同一行：vue 里专门补了 flex 才没让国旗独占一行。
+   */
   @Builder
   bodyMeta() {
-    // 机构 · 场地（对位 .nl-meta，无国旗版）
     if (this.metaText().length > 0) {
-      Text(this.metaText())
-        .fontSize(12) // 24rpx ÷ 2
-        .fontColor('#7A8598')
-        .maxLines(1)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
-        .width('100%')
-        .margin({ top: 5 })
+      Row() {
+        if (this.flagText().length > 0) {
+          Text(this.flagText())
+            .fontSize(11) // 34×24rpx 的旗子，emoji 用字号近似
+            .margin({ right: 5 }) // 10rpx ÷ 2
+            .flexShrink(0)
+        }
+        Text(this.metaText())
+          .fontSize(12) // 24rpx ÷ 2
+          .fontColor('#6B7891')
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .layoutWeight(1) // 对位 flex:1 + min-width:0
+      }
+      .width('100%')
+      .alignItems(VerticalAlign.Center)
+      .margin({ top: 5 }) // 10rpx ÷ 2
     }
+  }
 
-    // 火箭型号：没有就是没有，不占一行
-    if (this.rocketText().length > 0) {
-      Text(this.rocketText())
-        .fontSize(12)
-        .fontColor('#A7B4C7')
-        .maxLines(1)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
-        .width('100%')
-        .margin({ top: 5 })
+  /** 倒计时：lg 档铺满整行（对位 .nl-cd 的 margin-top 26rpx） */
+  @Builder
+  bodyCountdown() {
+    Row() {
+      Countdown({ net: strOf(this.item.net), sizeMode: 'lg', showLabel: true })
     }
+    .width('100%')
+    .margin({ top: 13 }) // 26rpx ÷ 2
   }
 
   @Builder
@@ -277,27 +306,32 @@ export struct NextLaunch {
     Row() {
       Text(this.timeText())
         .fontSize(11.5) // 23rpx ÷ 2
-        .fontColor('#55617A')
+        .fontColor('#4A5568')
         .maxLines(1)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
         .layoutWeight(1)
 
-      Text('查看详情 ›')
-        .fontSize(12.5) // 25rpx ÷ 2
-        .fontColor('#38BDF8')
-        .maxLines(1)
-        .margin({ left: 8 })
-
-      if (this.more) {
-        Text('更多发射 ›')
-          .fontSize(12.5)
+      // 出口用 Row 包住再 flexShrink(0)：两个「›」紧贴会被读成一个词，
+      // 中间留 11vp（对位 .nl-more + .nl-more 的 margin-left 22rpx）
+      Row() {
+        Text('查看详情 ›')
+          .fontSize(12.5) // 25rpx ÷ 2
           .fontColor('#38BDF8')
           .maxLines(1)
-          .margin({ left: 11 }) // 22rpx ÷ 2
-          .onClick(() => {
-            this.onMore();
-          })
+
+        if (this.more) {
+          Text('更多发射 ›')
+            .fontSize(12.5)
+            .fontColor('#38BDF8')
+            .maxLines(1)
+            .margin({ left: 11 })
+            .onClick(() => {
+              this.onMore();
+            })
+        }
       }
+      .flexShrink(0)
+      .margin({ left: 8 })
     }
     .width('100%')
     .alignItems(VerticalAlign.Center)
@@ -332,7 +366,6 @@ export struct NextLaunch {
     .backgroundColor('#141A26')
     .borderRadius(12) // 24rpx ÷ 2
     .border({ width: 1, color: '#2438BDF8' }) // rgba(56,189,248,0.14)
-    .opacity(0.92)
     .padding({ left: 16, right: 16 })
   }
 
@@ -341,15 +374,15 @@ export struct NextLaunch {
   @Builder
   card() {
     Column() {
-      Stack({ alignContent: Alignment.Bottom }) {
+      Stack({ alignContent: Alignment.TopStart }) {
         this.heroImage()
         this.heroMask()
 
-        // 叠层整体压在图片底边；Bottom 对齐后高度随内容走
+        // 徽章在左上角，12vp 内边距（对位 .nl-badge 的 left/top 24rpx）
         Column() {
-          this.heroOverlay()
+          this.statusBadge()
         }
-        .width('100%')
+        .padding({ left: 12, top: 12 })
       }
       .width('100%')
       .height(HERO_H)
@@ -357,6 +390,7 @@ export struct NextLaunch {
       Column() {
         this.bodyTitle()
         this.bodyMeta()
+        this.bodyCountdown()
         this.bodyFoot()
       }
       .width('100%')
@@ -370,7 +404,6 @@ export struct NextLaunch {
     .borderRadius(12) // 24rpx ÷ 2
     .border({ width: 1, color: '#2438BDF8' }) // 1rpx rgba(56,189,248,0.14)
     .clip(true)
-    .opacity(0.92) // 见文件头「有意差异 5」
     .onClick(() => {
       if (this.hasData()) {
         hilog.debug(DOMAIN, TAG, '点击下次发射卡 id=%{public}s', strOf(this.item.id));
