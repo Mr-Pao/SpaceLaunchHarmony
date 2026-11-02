@@ -43,7 +43,7 @@ import { fileStore } from '../data/FileStore';
 import { FILES, DATA_VERSION } from '../constants/Dataset';
 import { formatGeneratedAt } from '../utils/Format';
 import { StarField } from '../components/StarField';
-import { Nav, ROUTE_STATS, ROUTE_ASSETS, ROUTE_NEO, ROUTE_EVENTS, ROUTE_FAVORITES, ROUTE_VERSION } from '../routes/Nav';
+import { Nav, ROUTE_STATS, ROUTE_ASSETS, ROUTE_NEO, ROUTE_EVENTS, ROUTE_FAVORITES, ROUTE_VERSION, ROUTE_STATIONS } from '../routes/Nav';
 import { favInit, favCount, FAV_VERSION_KEY } from '../data/Favorites';
 import { common } from '@kit.AbilityKit';
 
@@ -201,12 +201,17 @@ export struct MineView {
     new MnRow('ℹ️', '关于', 'about')
   ];
 
-  /** 探索四宫格。顺序即 1-2 / 3-4 的阅读顺序，与小程序一致 */
+  /** 探索格。顺序即 1-2 / 3-4 / 5 的阅读顺序，前四格与小程序一致 */
   private tiles: MnTile[] = [
     new MnTile('📊', '数据统计', '历年发射量', 'stats'),
     new MnTile('🛰️', '太空资产', '在轨统计·卫星百科·解体', 'assets'),
     new MnTile('☄️', '近地天体', '未来一周掠地日程', 'neo'),
-    new MnTile('📅', '近期活动', 'EVA·轨道插入·飞船事件', 'events')
+    new MnTile('📅', '近期活动', 'EVA·轨道插入·飞船事件', 'events'),
+    // 第 5 格：空间站。
+    // 小程序那边空间站列表页**没有任何入口**（只有分享 path 能进来），
+    // 鸿蒙侧既然做完了列表与详情，就该有个门。放探索区而不是塞进「太空资产」，
+    // 因为太空资产已有三个 tab（在轨 / 卫星 / 解体），再叠一个会变成抽屉式套娃。
+    new MnTile('🏛️', '空间站', '在轨站 · 远征队 · 驻留', 'stations')
   ];
 
   // ============ 生命周期 ============
@@ -352,7 +357,10 @@ export struct MineView {
    *
    * 对位小程序 pages/stats / space-assets / neo / events 四页，
    * 鸿蒙侧已各自实现为 view/StatsView、SpaceAssetsView、NeoView、EventsView，
-   * 由 Index.ets 的 PageMap 分发。四页都无入参，所以共用 Nav.pushBlank。
+   * 由 Index.ets 的 PageMap 分发。前三页都无入参，所以共用 Nav.pushBlank。
+   *
+   * 空间站（stations）例外，走 Nav.pushStations()——虽然它也没有入参，
+   * 但它有自己的 push 方法，语义上比"任意空白页"更清楚，将来加筛选参数也不用改调用点。
    */
   private onTile(key: string): void {
     if (key === 'stats') {
@@ -363,8 +371,10 @@ export struct MineView {
       Nav.pushBlank(ROUTE_NEO);
     } else if (key === 'events') {
       Nav.pushBlank(ROUTE_EVENTS);
+    } else if (key === 'stations') {
+      Nav.pushStations();
     } else {
-      // key 只在内部产生、四值穷举，走到这里说明 tiles 数组被改漏了一项
+      // key 只在内部产生、五值穷举，走到这里说明 tiles 数组被改漏了一项
       hilog.warn(DOMAIN, TAG, '四宫格出现未知 key: %{public}s', key);
     }
   }
@@ -687,6 +697,16 @@ export struct MineView {
       Row({ space: 12 }) {
         this.tileCell(2)
         this.tileCell(3)
+      }
+      .width('100%')
+      .margin({ top: 12 })
+
+      // 第 5 格单独一行，右侧留同宽空气占位。
+      // 不用 Blank()：Blank 在 Row 里会吃掉全部剩余宽度，把格子挤成 0。
+      Row({ space: 12 }) {
+        this.tileCell(4)
+        Column()
+          .layoutWeight(1)
       }
       .width('100%')
       .margin({ top: 12 })
