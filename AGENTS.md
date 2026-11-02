@@ -88,24 +88,67 @@ export PATH="$DS/jbr/bin:$DS/tools/node:$PATH"
   两万条卫星数据放普通成员变量（**非 `@State`**），只把 `version`/`count` 挂 `@State`。
 - **不要用 `AppStorage` 承载大数据集**（全局广播 + 响应式代理开销）。
 
-## 七、进度（2026-11-02）
+## 七、进度（2026-11-03 02:20 更新）
 
-- ✅ 工程骨架 37 文件，编译通过，HAP 268KB
-- ✅ 五 tab 骨架 + 今日页（即将发射列表，含骨架屏/错误态/空态/下拉刷新）
-- ✅ 网络层 `HttpClient.ets`（195 行）、缓存层 `FileStore.ets`（267）+ `Repository.ets`（728）
-- ✅ 常量与模型 `Dataset.ets`（322）+ 5 个 model（691）
-- ⬜ 发射 / 图库 / 火箭 / 我的四个 tab 仍是**占位页**（各 54–63 行）
-- ⬜ 悬浮胶囊图标用「圆环 + 实心点」几何图形临时替代，5 个 PNG 未画（`ic_today` / `ic_launch` /
-  `ic_gallery` / `ic_rocket` / `ic_mine`，建议 96×96 @3x，替换位置在 `FloatingTabBar.ets` 的 `iconOf()`）
-- ⬜ 未配签名、未上真机
-- ⬜ 22 个数据集还没有 interface（当前可用 `Repository.load<Object>()` 绕过）
+**已完成并推送（最新提交 `f4efe5d`）**
+
+| 模块 | 文件 | 状态 |
+|---|---|---|
+| 骨架/配置 | 15 配置 + 3 png，386 行 | ✅ |
+| 网络/缓存 | `api/HttpClient`（195）+ `data/FileStore`（267）+ `data/Repository`（728） | ✅ |
+| 常量/模型 | `constants/Dataset`（322）+ `constants/ZhMaps`（883）+ 9 个 model | ✅ |
+| 今日 tab | `view/TodayView`（727）+ 6 组件 | ✅ 1:1 复刻 |
+| 发射 tab | `view/LaunchView`（780）+ `components/LaunchCard`（296）+ `LaunchCalendar`（409） | ✅ 含日历视图 |
+| 图库 tab | `view/GalleryView`（638）+ `components/GalleryGrid`（288） | ✅ 三列瀑布流 |
+| 火箭 tab | `view/RocketView`（788）+ `components/RocketCard`（621） | ✅ 全球实力榜四榜七地区 |
+| 我的 tab | `view/MineView`（800） | ✅ |
+| 发射详情 | `view/LaunchDetailView`（1642） | ✅ |
+| 火箭详情 | `view/RocketDetailView`（954） | ✅ |
+| 看图器 | `view/PhotoDetailView`（620）捏合/双击/拖动/下滑关闭 | ✅ |
+| 资讯 | `view/ArticleDetailView`（373）+ `view/NewsListView`（488） | ✅ |
+| 数据统计 | `model/Stats`（216）+ `view/StatsView`（827） | ✅ 柱状图+明细+Top5 |
+| 太空资产 | `model/Satellite`（288）+ `view/SpaceAssetsView`（1134） | ✅ 三 tab |
+| 近地天体 | `model/Neo`（?）+ `view/NeoView`（708） | ✅ |
+| 近期活动 | `model/Event`（136）+ `view/EventsView`（602） | ✅ |
+| 服务卡片 | `EntryFormAbility`（520）+ 2 卡片页 | ⚠️ 2×2 正常，**2×4 图片纯黑未解决** |
+
+**路由**：`routes/Nav.ets`（门面 + `NAV_DETAIL_DEPTH_KEY`）、`NavParam.ets`（4 个入参 class）、
+`DetailPages.ets`（9 个 `@Builder` 页面）。**每 tab 一条独立 `NavPathStack`**，
+`Index.ets` 切 tab 时把活跃栈写进 `Nav.current`。所有详情页 `NavDestination` 必须挂
+`.onShown(() => Nav.markDetailShown())` + `.onHidden(() => Nav.markDetailHidden())`，
+否则底部胶囊会浮在详情页上。
+
+**未完成**
+- ⬜ 卡片 2×4 图片纯黑（`formImages` + fd 通路日志全绿仍不出图，两次修法 `0eeed79`/`573621f` 均未解决，已挂起）
+- ⬜ 收藏 / 提醒清单（无存储层，我的页虚线卡文案已如实写「尚未接入」）
+- ⬜ 图库「看全部 N 张」中央悬浮胶囊
+- ⬜ 发射 tab 右下悬浮「喇叭/搜索」两圆按钮
+- ⬜ 5 个 tab 图标仍是几何圆环（`FloatingTabBar.ets` 的 `iconOf()`，要换成 `Image($r('app.media.ic_*'))`）
+- ⬜ 签名（**模拟器不需要**，unsigned HAP 直接装；上真机/上架才要）
+- ⬜ 元服务、分布式（用户定位 V2/V3 再做）
 
 ## 八、值得记住的教训
 
-- **子代理交付的代码能一次性通过 ArkTS 严格模式编译**（37 文件 / 3463 行，除 3 处已修的错误）。
-  但**不能相信子代理"未编译"的自查结论**——`LaunchSummary` 漏 `pad` 字段就是这么漏掉的
-  （`slim.js:145` 明明有），只有编译才暴露。
-- **字段结构要拿 `slim.js` 对照，不能只看 interface**。B 子代理核对 212 个字段名全对，
+- **子代理交付的代码大多能一次通过 ArkTS 严格模式编译**，但**不能相信"未编译"的自查结论**。
+  `LaunchSummary` 漏 `pad` 字段就是这么漏掉的（`slim.js:145` 明明有），只有编译才暴露。
+- **字段结构要拿 `slim.js` 对照，不能只看 interface**。核对 212 个字段名全对，
   但整块 `pad` 对象没翻译。
 - **新建目录类工作要在第一批文件落盘时就提交**，不要等全部子代理完成，
   否则用户在 GitHub 上长时间看不到进展（2026-11-02 的教训）。
+- **并行子代理共用一个工作区**：主窗口 `git add -A` 会把还在写文件的子代理半成品一起提交。
+  提交前先 `git status` 确认没有正在写的文件，或等子代理回报完再提交。
+- **`@Prop` 名不能与 `CustomComponent` 内置方法同名**。`size` 踩过（`Countdown` 报
+  `Property 'size' is not assignable to the same property in base type 'CustomComponent'`），
+  已改 `sizeMode`。同类危险名：`width` / `height` / `padding` / `margin` / `clip` / `id` / `content` / `scale`。
+- **`Row` 没有 `.flexWrap()`**，chip 需要折行必须用 `Flex({ wrap: FlexWrap.Wrap })`。
+- **`Text` 没有 `.maxWidth()`**，要用 `.width('70%').textAlign(TextAlign.End)` 或 `constraintSize`。
+- **`.overflow(Overflow.Hidden)` 在 `ColumnAttribute` 上不存在**，用 `.clip(true)`。
+- **`ForEach` 的 key 必须把异步数据算进去**（`LaunchCalendar` 用 `dateStr + launches.length`），
+  否则数据变了但 key 没变，ArkUI 不重跑子项，黄点永远不出现。
+- **`@State` 不观察数组下标赋值**，`imgErr[i] = true` 无效，必须整体替换数组。
+- **`repo.load` 无缓存 + 网络失败是 reject**，catch 里绝不能置 `loaded = true`，
+  否则弱网首屏变永久空页（小程序 `gallery-all` 踩过，鸿蒙四页都刻意守这条）。
+- **模拟器可直接装 unsigned HAP**（`hdc install -r entry-default-unsigned.hap`），
+  所以开发期完全不用配签名。
+- **OneDrive 同步会锁 `entry/build`**，编译报 `11204003 File Resource Error / Failed to delete ... No error`
+  是锁冲突不是代码问题，`rm -rf entry/build` 重跑即可。
