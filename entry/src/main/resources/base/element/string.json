@@ -1,0 +1,40 @@
+{
+  "string": [
+    {
+      "name": "module_desc",
+      "value": "航天发射跟踪主模块"
+    },
+    {
+      "name": "EntryAbility_desc",
+      "value": "航天发射跟踪"
+    },
+    {
+      "name": "EntryAbility_label",
+      "value": "航天发射"
+    },
+    {
+      "name": "internet_reason",
+      "value": "用于获取发射日程、图库与资讯数据"
+    },
+    {
+      "name": "tab_today",
+      "value": "今日"
+    },
+    {
+      "name": "tab_launch",
+      "value": "发射"
+    },
+    {
+      "name": "tab_gallery",
+      "value": "图库"
+    },
+    {
+      "name": "tab_rocket",
+      "value": "火箭"
+    },
+    {
+      "name": "tab_mine",
+      "value": "我的"
+    }
+  ]
+}

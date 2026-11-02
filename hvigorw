@@ -1,0 +1,4 @@
+#!/bin/sh
+# hvigor 构建入口（CI 与命令行通用）
+# 需要 DevEco Studio 自带 Node 与 JDK，见 README.md
+exec node "$DEVECO_HOME/tools/hvigor/bin/hvigorw.js" "$@"

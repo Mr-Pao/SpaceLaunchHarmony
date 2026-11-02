@@ -1,0 +1,16 @@
+# HarmonyOS 构建产物与本地配置
+build/
+.cxx/
+oh_modules/
+.hvigor/
+.idea/
+local.properties
+**/oh-package-lock.json5
+.clangd
+.clang-format
+.clang-tidy
+
+# 系统与编辑器
+.DS_Store
+Thumbs.db
+*.log

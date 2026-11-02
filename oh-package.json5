@@ -1,0 +1,10 @@
+{
+  "modelVersion": "5.0.0",
+  "description": "SpaceLaunch HarmonyOS app",
+  "name": "spacelaunch",
+  "version": "1.0.0",
+  "main": "",
+  "author": "",
+  "license": "",
+  "dependencies": {}
+}

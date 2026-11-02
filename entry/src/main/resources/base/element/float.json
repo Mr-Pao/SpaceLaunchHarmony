@@ -1,0 +1,64 @@
+{
+  "float": [
+    {
+      "name": "text_caption",
+      "value": "10fp"
+    },
+    {
+      "name": "text_small",
+      "value": "12fp"
+    },
+    {
+      "name": "text_body",
+      "value": "14fp"
+    },
+    {
+      "name": "text_subtitle",
+      "value": "16fp"
+    },
+    {
+      "name": "text_title",
+      "value": "18fp"
+    },
+    {
+      "name": "text_headline",
+      "value": "22fp"
+    },
+    {
+      "name": "text_display",
+      "value": "28fp"
+    },
+    {
+      "name": "space_xs",
+      "value": "4vp"
+    },
+    {
+      "name": "space_sm",
+      "value": "8vp"
+    },
+    {
+      "name": "space_md",
+      "value": "12vp"
+    },
+    {
+      "name": "space_lg",
+      "value": "16vp"
+    },
+    {
+      "name": "space_xl",
+      "value": "24vp"
+    },
+    {
+      "name": "card_radius",
+      "value": "12vp"
+    },
+    {
+      "name": "page_padding",
+      "value": "16vp"
+    },
+    {
+      "name": "tabbar_height",
+      "value": "56vp"
+    }
+  ]
+}
