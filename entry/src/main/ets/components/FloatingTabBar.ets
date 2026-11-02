@@ -111,19 +111,26 @@ export struct FloatingTabBar {
   }
 
   build() {
+    // 外层是全宽的深色渐变遮罩，胶囊只是它里面居中的一条。
+    //
+    // 为什么不能只给胶囊上色：胶囊只有 88% 宽，两侧各 6% 和它下方 20vp 留白
+    // 都是完全透明的，页面内容滚到该区域时会直接透出来（2026-11-02 截图底部
+    // 那条模糊色带就是这么来的）。加一层整屏宽、从透明渐变到页面底色的遮罩后，
+    // 滚到底的内容会被自然压暗淡出，胶囊边界也就干净了。
     Column() {
       Row() {
         ForEach(this.items, (item: TabItem, index: number) => {
           this.tabCell(index, item.label);
         }, (item: TabItem, index: number) => item.icon + '_' + index)
       }
-      .width('100%')
+      .width('88%')
       .height(58)
       .padding({ left: 6, right: 6 })
       .borderRadius(29)
-      // 半透明深色 + 背景模糊 = 内容从胶囊底下滚过时能看到糊化的色块，
-      // 这是小程序里 backdrop-filter 的效果，ArkUI 用 backdropBlur 对位
-      .backgroundColor('#9E1E283C') // rgba(30,40,60,0.62)
+      // 深色近实底 + 背景模糊：内容从胶囊底下滚过时只剩极淡的糊化色块。
+      // 原先是 rgba(30,40,60,0.62)，实测胶囊边缘会透出底下图片的彩色色带
+      // （2026-11-02 截图：胶囊下半截泛蓝），所以把不透明度提到 0.95。
+      .backgroundColor('#F21E283C') // rgba(30,40,60,0.95)
       .backdropBlur(24)
       // 1px 半透明白边：让胶囊在深色页面上有「玻璃边缘」的高光。
       // 注意原 wxss **没有** border，这是本次有意加的（用户 prompt 指定），
@@ -131,9 +138,12 @@ export struct FloatingTabBar {
       .border({ width: 1, color: '#1AFFFFFF' })
       .shadow({ radius: 20, color: '#80000000', offsetX: 0, offsetY: 6 })
     }
-    .width('88%')
-    // 底部间距 20：胶囊与屏幕底边留白，形成「浮起来」的观感（原 wxss 是 12rpx+安全区）。
-    // 有手势条的机型要改成动态计算，见文件头注释
-    .margin({ bottom: 20 })
+    .width('100%')
+    // 顶部 28 给渐变留出渐入高度，底部 20 保持胶囊与屏幕底边的「浮起」距离
+    .padding({ top: 28, bottom: 20 })
+    .linearGradient({
+      angle: 180,
+      colors: [['#000A0E17', 0.0], ['#B80A0E17', 0.5], ['#F20A0E17', 1.0]]
+    })
   }
 }

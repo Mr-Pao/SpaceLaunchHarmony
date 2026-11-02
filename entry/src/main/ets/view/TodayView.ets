@@ -68,8 +68,14 @@ const BG_PRIMARY: string = '#0A0E17';
  */
 const TICK_MS: number = 30000;
 
-/** 底部内边距：悬浮胶囊让位（58 高 + 20 margin + 14 余量） */
-const BOTTOM_PAD: number = 92;
+/**
+ * 底部内边距：悬浮胶囊让位。
+ *
+ * 胶囊本体 58 + 底部 margin 20 = 78，再加胶囊下方那层渐变遮罩的渐入高度
+ * （FloatingTabBar 里 padding.top 28）。原先只留 92，滚到底时「往年今日」的
+ * 最后一条会被胶囊压掉半行（2026-11-02 截图确认），改成 120 留出余量。
+ */
+const BOTTOM_PAD: number = 120;
 
 /** 页面左右内边距（任务书视觉规范 12vp） */
 const PAGE_PAD: number = 12;

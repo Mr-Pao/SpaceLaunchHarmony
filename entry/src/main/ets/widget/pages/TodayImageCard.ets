@@ -1,17 +1,16 @@
 /**
  * widget/pages/TodayImageCard.ets —— 「今日一图」服务卡片（2*4）
  *
- * 数据来源：EntryFormAbility 注入的 { imgTitle, imgDate, imgUrl } → @LocalStorageProp。
+ * 数据来源：EntryFormAbility 注入的 LocalStorage → @LocalStorageProp。
  *
- * TODO（真机风险，已知未解决）：
- *   卡片里的 Image 组件**读网络直链 URL 可能被系统拦截**（Form Kit 的网络图片
- *   需要走 formImages，把图片下载到本地后用 fd 传进去才能稳定显示）。
- *   当前按直链写，若真机上卡片是一片深色背景、图不出来，改法见下：
- *     1) 在 Ability 里 fetch 图片字节，写入 this.context.filesDir 下的临时文件；
- *     2) 打开该文件拿 fd（DEFAULT_IMAGE_FD 名字的 key 放进 bindingData）；
- *     3) formBindingData.createFormBindingData({ imgFd: fd, imgName: 'apod' })；
- *     4) 卡片端 Image(this.imgName) 由系统按 formImages 约定解析。
- *   这条路要额外的图片下载与清理逻辑，先不引入，等真机验证失败再换。
+ * ⚠ 图片为什么不用 URL：
+ *   卡片进程（Form Kit 的渲染 sandbox）**没有网络权限**，Image('https://...')
+ *   在桌面上恒为一块纯黑 —— 2026-11-02 桌面实测：标题「火星上的长云」和日期
+ *   2026-11-02 正常，图区全黑。官方通路只有 formImages：
+ *     Ability 侧把图片下载到 filesDir，openSync 拿 fd，
+ *     createFormBindingData({ formImages: { img: fd } })；
+ *     卡片侧写 Image(this.img)，系统会把 'img' 这个键解析成那张图。
+ *   所以这里的 imgUrl 字段**已废弃**，仅保留兼容（旧版 Ability 可能还在喂它）。
  *
  * 注意：两个卡片页会编译进同一个 widget.abc，**类型/接口不能同名**
  * （同名会被当成 declaration merging，报 arkts-no-decl-merging）。
@@ -33,6 +32,15 @@ class TodayImageAction {
 struct TodayImageCard {
   @LocalStorageProp('imgTitle') imgTitle: string = '今日一图';
   @LocalStorageProp('imgDate') imgDate: string = '';
+  /**
+   * 图片键：由 formImages 注入。
+   *
+   * 值是 Ability 侧 formImages 里的 key 名（固定 'img'），**不是 URL 也不是本地路径**。
+   * 系统在把 bindingData 交给卡片之前已经把它换成了可渲染的图片资源。
+   * 没有图时它是空串，此时不渲染 Image，避免出现破图占位。
+   */
+  @LocalStorageProp('img') img: string = '';
+  /** @deprecated 卡片进程无网络权限，URL 加载不出来；保留只为兼容旧版 Ability */
   @LocalStorageProp('imgUrl') imgUrl: string = '';
 
   private readonly BG: string = '#0A0E17';
@@ -46,9 +54,10 @@ struct TodayImageCard {
 
   build() {
     Stack({ alignContent: Alignment.Bottom }) {
-      // 满幅底图。imgUrl 为空时只留深色底，不渲染 Image 以免出现破图占位
-      if (this.imgUrl.length > 0) {
-        Image(this.imgUrl)
+      // 满幅底图。img 为空时只留深色底
+      if (this.img.length > 0) {
+        // 不要加 .draggable(false)：Form Kit 卡片不支持该属性，编译期直接报 11706006
+        Image(this.img)
           .width('100%')
           .height('100%')
           .objectFit(ImageFit.Cover)

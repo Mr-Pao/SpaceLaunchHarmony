@@ -55,34 +55,51 @@ export default class EntryAbility extends UIAbility {
    * 从后台切回来（onForeground）不会走这里，所以窗口设置放这里不会重复执行。
    */
   onWindowStageCreate(windowStage: window.WindowStage): void {
-    // 1) 窗口底色：堵住「启动页退场 → 首帧内容上屏」之间的白窗口
-    try {
-      const mainWindow: window.Window = windowStage.getMainWindowSync();
-      mainWindow.setWindowBackgroundColor(BG_PRIMARY);
-
-      // 状态栏 / 导航栏沉浸式：内容是深色的，系统栏跟着透出来才连续。
-      // `window.getWindowSystemBarProperties` 在 API 12 里是异步的，
-      // 这里不 await（不阻塞首帧），失败也只是状态栏颜色不对，不影响功能
-      mainWindow.setWindowSystemBarProperties({
-        statusBarColor: BG_PRIMARY,
-        statusBarContentColor: '#FFFFFF',
-        navigationBarColor: BG_PRIMARY,
-        navigationBarContentColor: '#FFFFFF'
-      }).catch((err: BusinessError) => {
-        hilog.warn(DOMAIN, TAG, 'setWindowSystemBarProperties failed: %{public}s', err.message);
-      });
-    } catch (e) {
-      const err = e as BusinessError;
-      hilog.error(DOMAIN, TAG, 'getMainWindowSync failed: %{public}s', err.message);
-    }
-
-    // 2) 加载唯一宿主页
+    // 1) 加载唯一宿主页
     windowStage.loadContent('pages/Index', (err: BusinessError) => {
       if (err.code !== 0) {
         hilog.error(DOMAIN, TAG, 'loadContent failed: %{public}s', err.message);
         return;
       }
       hilog.info(DOMAIN, TAG, 'loadContent succeeded');
+      // 2) 内容上屏之后再动窗口样式
+      this.applyWindowStyle(windowStage);
+    });
+  }
+
+  /**
+   * 把窗口底色与系统栏（状态栏 / 导航栏）压成深色。
+   *
+   * ⚠ 为什么不在 onWindowStageCreate 开头直接调：
+   *   之前用 getMainWindowSync() 在这个时机取窗口，设备日志实测抛
+   *   `getMainWindowSync failed: This window state is abnormal.`，
+   *   整段设置被 catch 吞掉 —— 于是状态栏一直是系统默认的白底黑字，
+   *   与深色页面割裂（2026-11-02 截图确认）。
+   *   改成 loadContent 回调里用异步 getMainWindow()，此时窗口已 ready。
+   */
+  private applyWindowStyle(windowStage: window.WindowStage): void {
+    windowStage.getMainWindow().then((mainWindow: window.Window) => {
+      // 窗口底色：堵住「启动页退场 → 首帧内容上屏」之间的白窗口
+      try {
+        mainWindow.setWindowBackgroundColor(BG_PRIMARY);
+      } catch (e) {
+        const err = e as BusinessError;
+        hilog.warn(DOMAIN, TAG, 'setWindowBackgroundColor failed: %{public}s', err.message);
+      }
+
+      // 状态栏 / 导航栏：背景与页面同色、文字白色 → 视觉上系统栏融入深色头部
+      mainWindow.setWindowSystemBarProperties({
+        statusBarColor: BG_PRIMARY,
+        statusBarContentColor: '#FFFFFF',
+        navigationBarColor: BG_PRIMARY,
+        navigationBarContentColor: '#FFFFFF'
+      }).then(() => {
+        hilog.info(DOMAIN, TAG, 'system bar themed to dark');
+      }).catch((err: BusinessError) => {
+        hilog.warn(DOMAIN, TAG, 'setWindowSystemBarProperties failed: %{public}s', err.message);
+      });
+    }).catch((err: BusinessError) => {
+      hilog.warn(DOMAIN, TAG, 'getMainWindow failed: %{public}s', err.message);
     });
   }
 
