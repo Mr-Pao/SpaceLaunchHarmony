@@ -76,7 +76,7 @@ export interface RkLauncherRaw {
   image?: string | null;
 }
 
-export interface RkLaunchersPayload {
+export interface RkLauncherList {
   v?: number;
   dataset?: string;
   generatedAt?: string;

@@ -21,9 +21,37 @@ export const ROUTE_PHOTO: string = 'photoDetail';
 export const ROUTE_ROCKET: string = 'rocketDetail';
 export const ROUTE_ARTICLE: string = 'articleDetail';
 
+/**
+ * 详情页层数写进 AppStorage 用的 key。
+ * Index.ets 用 @StorageProp 订阅它，>0 时把底部悬浮胶囊整个摘掉。
+ */
+export const NAV_DETAIL_DEPTH_KEY: string = 'nav_detail_depth';
+
 export class Nav {
   /** 当前活跃 tab 的路由栈。Index.ets 在 onChange 与首次 onAppear 时写入 */
   static current: NavPathStack | null = null;
+
+  /**
+   * 当前压了几层详情页。
+   *
+   * 为什么需要它：详情页 push 在 **tab 内部**的 Navigation 里，只覆盖 TabContent
+   * 那一块；而底部悬浮胶囊是 Index.ets 里 Tabs 的兄弟节点，层级更高、永远盖不住 ——
+   * 结果就是详情页打开后胶囊还浮在内容上（实测截图确认）。
+   *
+   * 为什么用 NavDestination 的 onShown/onHidden 计数，而不是在 push/pop 门面里加减：
+   * 系统返回手势、物理返回键都不经过 Nav.pop，只在门面里加减会漏、越用越偏。
+   */
+  private static detailDepth: number = 0;
+
+  static markDetailShown(): void {
+    Nav.detailDepth = Nav.detailDepth + 1;
+    AppStorage.setOrCreate(NAV_DETAIL_DEPTH_KEY, Nav.detailDepth);
+  }
+
+  static markDetailHidden(): void {
+    Nav.detailDepth = Nav.detailDepth > 0 ? Nav.detailDepth - 1 : 0;
+    AppStorage.setOrCreate(NAV_DETAIL_DEPTH_KEY, Nav.detailDepth);
+  }
 
   /** 跳到发射详情 */
   static pushLaunch(param: LaunchNavParam): void {

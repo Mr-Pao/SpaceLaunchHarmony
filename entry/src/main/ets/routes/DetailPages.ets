@@ -88,6 +88,14 @@ export function LaunchDetailPage(name: string, param: LaunchNavParam) {
   }
   .hideTitleBar(true)
   .backgroundColor(BG)
+  // 详情页出现/消失时同步「压了几层」，Index 据此隐藏底部悬浮胶囊。
+  // 用这两个回调而不是在 push/pop 里加减，是因为系统返回手势与物理返回键都不经过 Nav.pop。
+  .onShown(() => {
+    Nav.markDetailShown();
+  })
+  .onHidden(() => {
+    Nav.markDetailHidden();
+  })
 }
 
 /** 图片详情页：真实内容在 PhotoDetailView（缩放/拖动/下滑关闭需要 @State） */
@@ -98,6 +106,12 @@ export function PhotoDetailPage(name: string, param: PhotoNavParam) {
   }
   .hideTitleBar(true)
   .backgroundColor('#000000')
+  .onShown(() => {
+    Nav.markDetailShown();
+  })
+  .onHidden(() => {
+    Nav.markDetailHidden();
+  })
 }
 
 /** 火箭详情页：真实内容在 RocketDetailView（@Builder 没有状态，装不下加载过程） */
@@ -108,4 +122,10 @@ export function RocketDetailPage(name: string, param: RocketNavParam) {
   }
   .hideTitleBar(true)
   .backgroundColor(BG)
+  .onShown(() => {
+    Nav.markDetailShown();
+  })
+  .onHidden(() => {
+    Nav.markDetailHidden();
+  })
 }

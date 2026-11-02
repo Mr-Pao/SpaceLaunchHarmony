@@ -40,7 +40,7 @@ import { hilog } from '@kit.PerformanceAnalysisKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { repo, LoadOptions } from '../data/Repository';
 import { strOf } from '../utils/Format';
-import { RocketCard, RkRocket, RkLauncherRaw, RkLaunchersPayload, rkFromRaw } from '../components/RocketCard';
+import { RocketCard, RkRocket, RkLauncherRaw, RkLauncherList, rkFromRaw } from '../components/RocketCard';
 import { Nav } from '../routes/Nav';
 import { RocketNavParam } from '../routes/NavParam';
 
@@ -94,15 +94,19 @@ export struct RocketView {
     this.loading = true;
     this.failed = false;
 
-    const opts: LoadOptions<RkLaunchersPayload> = {};
-    // 有缓存先渲染再静默刷新：launchers 是 532 条静态数据，不该每次进页转圈
-    opts.onUpdate = (data: RkLaunchersPayload) => {
-      this.applyPayload(data);
+    const opts: LoadOptions<RkLauncherList> = {
+      // 有缓存先渲染再静默刷新：launchers 是 532 条静态数据，不该每次进页转圈。
+      // 刷新走 keepScroll=true —— 用户可能已经滚到第 300 条在看，后台回填后
+      // 把他弹回顶部比不刷新更糟；关键词也保留，不能被一次刷新清掉。
+      onUpdate: (data: RkLauncherList) => {
+        this.applyPayload(data, true);
+      }
     };
 
-    repo.load<RkLaunchersPayload>('launchers', opts)
-      .then((data: RkLaunchersPayload) => {
-        this.applyPayload(data);
+    repo.load<RkLauncherList>('launchers', opts)
+      .then((data: RkLauncherList) => {
+        // 首屏/首次成功：从顶部开始看，重算后回顶
+        this.applyPayload(data, false);
       })
       .catch((e: BusinessError) => {
         hilog.warn(DOMAIN, TAG, 'launchers 加载失败: %{public}s', e.message);
@@ -116,7 +120,7 @@ export struct RocketView {
   }
 
   /** 原始载荷 → 全量池。只在首屏/刷新时跑一次，不在滚动路径上 */
-  private applyPayload(data: RkLaunchersPayload): void {
+  private applyPayload(data: RkLauncherList, keepScroll: boolean): void {
     const raw: RkLauncherRaw[] = data.list !== undefined && data.list !== null ? data.list : [];
     const built: RkRocket[] = [];
     for (let i = 0; i < raw.length; i++) {
@@ -133,7 +137,7 @@ export struct RocketView {
     this.all = built;
     this.total = built.length;
     this.failed = false;
-    this.reapply(false);
+    this.reapply(keepScroll);
   }
 
   // ============ 过滤 ============

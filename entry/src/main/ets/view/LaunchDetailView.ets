@@ -345,14 +345,15 @@ export struct LaunchDetailView {
    */
   private loadSnapshot(name: DatasetName): void {
     const opts: LoadOptions<DataSet> = {
-      onUpdate: (fresh: DataSet) => {
+      onUpdate: () => {
         // 缓存过期后后台刷到了新数据：再探一次，命中就换上新内容
         this.probe(name);
       }
     };
 
     repo.load<DataSet>(name, opts)
-      .then((data: DataSet) => {
+      .then(() => {
+        // resolve 的值是整份快照，本页不直接用，直接从缓存里按 id 取
         this.probe(name);
       })
       .catch((e: BusinessError) => {
@@ -416,7 +417,8 @@ export struct LaunchDetailView {
     const opts: LoadOptions<NewsPayload> = {};
     repo.load<NewsPayload>('news', opts)
       .then((data: NewsPayload) => {
-        const raw: NewsItem[] = data.list !== undefined ? data.list : [];
+        // list 在 NewsPayload 里是必填字段，直接遍历即可
+        const raw: NewsItem[] = data.list;
         const kept: NewsItem[] = [];
         for (let i = 0; i < raw.length; i++) {
           if (kept.length >= NEWS_LIMIT) {

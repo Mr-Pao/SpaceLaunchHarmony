@@ -33,7 +33,7 @@ import { GalleryView } from '../view/GalleryView';
 import { RocketView } from '../view/RocketView';
 import { MineView } from '../view/MineView';
 import { FloatingTabBar } from '../components/FloatingTabBar';
-import { Nav, ROUTE_LAUNCH, ROUTE_PHOTO, ROUTE_ROCKET } from '../routes/Nav';
+import { Nav, ROUTE_LAUNCH, ROUTE_PHOTO, ROUTE_ROCKET, NAV_DETAIL_DEPTH_KEY } from '../routes/Nav';
 import { LaunchDetailPage, PhotoDetailPage, RocketDetailPage } from '../routes/DetailPages';
 import { LaunchNavParam, PhotoNavParam, RocketNavParam } from '../routes/NavParam';
 
@@ -42,6 +42,15 @@ import { LaunchNavParam, PhotoNavParam, RocketNavParam } from '../routes/NavPara
 struct Index {
   private tabsController: TabsController = new TabsController();
   @State currentIndex: number = 0;
+
+  /**
+   * 详情页层数（由 DetailPages 的 NavDestination.onShown/onHidden 写入）。
+   *
+   * 为什么需要：详情页 push 在 tab 内部的 Navigation 里，只覆盖 TabContent；
+   * 而底部胶囊是 Tabs 的兄弟节点、层级更高，盖不住 —— 详情页打开后胶囊会浮在内容上。
+   * 所以层数 >0 时直接把胶囊整个摘掉（不是设透明：透明了还会吃掉点击）。
+   */
+  @StorageProp(NAV_DETAIL_DEPTH_KEY) detailDepth: number = 0;
 
   /**
    * 五个 tab 各自的路由栈。
@@ -63,6 +72,8 @@ struct Index {
   aboutToAppear(): void {
     // 首帧就把「今日」栈交给全局门面，否则第一次点击详情时 Nav.current 还是 null
     Nav.current = this.stackToday;
+    // 初始化层数，避免 @StorageProp 拿不到默认值
+    AppStorage.setOrCreate(NAV_DETAIL_DEPTH_KEY, 0);
   }
 
   /** 按索引取栈，供 onChange 同步 Nav.current */
@@ -183,14 +194,18 @@ struct Index {
       .width('100%')
       .height('100%')
 
-      FloatingTabBar({
-        currentIndex: this.currentIndex,
-        onSelect: (index: number) => {
-          this.currentIndex = index;
-          Nav.current = this.stackAt(index);
-          this.tabsController.changeIndex(index);
-        }
-      })
+      // 详情页打开时摘掉胶囊：它是 Tabs 的兄弟节点，层级比 TabContent 里的
+      // Navigation 高，光靠 zIndex 盖不住 —— 只能整个不渲染。
+      if (this.detailDepth === 0) {
+        FloatingTabBar({
+          currentIndex: this.currentIndex,
+          onSelect: (index: number) => {
+            this.currentIndex = index;
+            Nav.current = this.stackAt(index);
+            this.tabsController.changeIndex(index);
+          }
+        })
+      }
     }
     .width('100%')
     .height('100%')

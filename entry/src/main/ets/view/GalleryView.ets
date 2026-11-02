@@ -120,6 +120,10 @@ export struct GalleryView {
   /** NASA 是否已经拉过（成功或失败都算，避免切 tab 时反复请求） */
   private nasaTried: boolean = false;
   private nasaInflight: boolean = false;
+  /** 精选索引文件的 generatedAt，用来识别「同一份数据的重复回调」 */
+  private featuredStamp: string = '';
+  /** NASA 那份的 generatedAt，同理 */
+  private nasaStamp: string = '';
 
   // 只留分段控件的 Scroller：瀑布流自己的滚动由 WaterFlow 内部持有，
   // 页面这一层没有需要程序化控制的滚动目标
@@ -137,10 +141,12 @@ export struct GalleryView {
     this.loading = true;
     this.failed = false;
 
-    const opts: LoadOptions<GxGalleryPayload> = {};
-    // 有缓存先渲染、再静默刷新：软 TTL 12 小时的图库没必要每次进页转圈
-    opts.onUpdate = (data: GxGalleryPayload) => {
-      this.applyFeatured(data);
+    const opts: LoadOptions<GxGalleryPayload> = {
+      // 有缓存先渲染、再静默刷新：软 TTL 12 小时的图库没必要每次进页转圈。
+      // applyFeatured 里按 generatedAt 去重，同一份数据的后台刷新不会把已追加的分片冲掉。
+      onUpdate: (data: GxGalleryPayload) => {
+        this.applyFeatured(data);
+      }
     };
 
     repo.load<GxGalleryPayload>('gallery', opts)
@@ -160,6 +166,15 @@ export struct GalleryView {
 
   /** 索引文件上屏：整份重置数据源，并把分片游标归零 */
   private applyFeatured(data: GxGalleryPayload): void {
+    const stamp: string = strOf(data.generatedAt);
+    // onUpdate 是「后台刷新」回调，同一份 generatedAt 会重复进来。
+    // 每次都 reset 会把用户已经触底追加的分片全部退回第 0 片，滚动位置也跟着跳，
+    // 所以按 generatedAt 去重：内容真变了才重铺。
+    if (this.featuredCount > 0 && stamp.length > 0 && stamp === this.featuredStamp) {
+      return;
+    }
+    this.featuredStamp = stamp;
+
     const raw: GxGalleryRaw[] = data.list !== undefined && data.list !== null ? data.list : [];
     const photos: GxPhoto[] = this.toFeatured(raw, 0);
     if (photos.length === 0) {
@@ -227,9 +242,10 @@ export struct GalleryView {
     // 先加计数再发请求：请求的回调可能早于下面的赋值执行（缓存命中时是微任务）
     this.pending = this.pending + 1;
 
-    const opts: LoadOptions<GxNasaPayload> = {};
-    opts.onUpdate = (data: GxNasaPayload) => {
-      this.applyNasa(data);
+    const opts: LoadOptions<GxNasaPayload> = {
+      onUpdate: (data: GxNasaPayload) => {
+        this.applyNasa(data);
+      }
     };
 
     repo.load<GxNasaPayload>('nasaImages', opts)
@@ -251,6 +267,13 @@ export struct GalleryView {
   }
 
   private applyNasa(data: GxNasaPayload): void {
+    const stamp: string = strOf(data.generatedAt);
+    // 同 applyFeatured：onUpdate 会把同一份数据再送一次，重铺 316 格会让滚动位置跳
+    if (this.nasaCount > 0 && stamp.length > 0 && stamp === this.nasaStamp) {
+      return;
+    }
+    this.nasaStamp = stamp;
+
     const raw: GxNasaRaw[] = data.list !== undefined && data.list !== null ? data.list : [];
     const photos: GxPhoto[] = [];
     for (let i = 0; i < raw.length; i++) {
