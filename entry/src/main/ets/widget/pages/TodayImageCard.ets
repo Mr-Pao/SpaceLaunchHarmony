@@ -38,6 +38,9 @@ struct TodayImageCard {
    * 值是 Ability 侧 formImages 里的 key 名（固定 'img'），**不是 URL 也不是本地路径**。
    * 系统在把 bindingData 交给卡片之前已经把它换成了可渲染的图片资源。
    * 没有图时它是空串，此时不渲染 Image，避免出现破图占位。
+   *
+   * ⚠ 2026-11-02 实测坑：Ability 侧若给空串（以为「系统会用同名 fd 覆盖」），
+   * 卡片拿到的就是 ''，图区恒黑。必须是 key 名字符串。
    */
   @LocalStorageProp('img') img: string = '';
   /** @deprecated 卡片进程无网络权限，URL 加载不出来；保留只为兼容旧版 Ability */

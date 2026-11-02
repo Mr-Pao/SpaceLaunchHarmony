@@ -57,6 +57,19 @@ const WANT_FORM_NAME: string = 'ohos.extra.param.key.form_name';
 /** 本地图片缓存最多保留几张（APOD 每天换 URL，不清理会无限增长） */
 const MAX_CACHED: number = 4;
 
+/**
+ * formImages 里图片的 key 名，与**卡片数据里那个字符串字段的值**相同。
+ *
+ * 官方约定（@ohos.app.form.formBindingData → createFormBindingData 示例）：
+ *   { 'imgSrc': 'image', 'formImages': { 'image': fd } }
+ * 即一个 string 字段的值 = formImages 的 key 名，系统交给卡片前会把它换成图片资源。
+ *
+ * ⚠ key 名绝不能和那个字段名本身相同。曾经两者都叫 'img'，系统把字符串字段
+ * 原样下发，卡片拿到 'img' 字面量、找不到图 → 图区恒黑（2026-11-02 桌面实测）。
+ * 这里用 'cardImage'，字段名仍是 img，两者不同即可。
+ */
+const IMAGE_KEY: string = 'cardImage';
+
 /** 清理缓存时用的排序条目 */
 class CacheEntry {
   path: string = '';
@@ -95,9 +108,9 @@ class CardData {
   /**
    * 卡片端 Image(this.img) 读的键。
    *
-   * 这里必须是空字符串：Form Kit 在处理 bindingData 时，会用 formImages 里
-   * 同名 key 对应的 fd 去解析真实图片，再覆盖这个字段。若这里塞了本地路径，
-   * 系统会把它当 URL 再去加载，反而失败。
+   * ⚠ 有图时必须写成 IMAGE_KEY（'img'），即 formImages 的 key 名 —— 系统会把这个
+   * 字段值换成可渲染图片。写空串或本地路径都不行（空串＝图区恒黑，本地路径＝当 URL 加载失败）。
+   * 无图时给空串，卡片端据此不渲染 Image，避免破图占位。
    */
   img: string = '';
 }
@@ -105,11 +118,14 @@ class CardData {
 /**
  * formImages 的键值对容器。
  *
- * 官方约定的最终形状是 {'formImages': {'img': fd}}；ArkTS 禁索引签名、
- * 禁无类型对象字面量，所以只能用一个只有一个字段的 class 来表示。
+ * 官方约定的最终形状是 {'formImages': {'key1': fd1}}；ArkTS 禁索引签名、
+ * 禁无类型对象字面量，只能用一个字段的 class 表示，字段名就是 key 名。
+ *
+ * ⚠ 字段名必须是 cardImage（= IMAGE_KEY），不能是 img —— 卡片数据里 img
+ * 字段的值写的是这个 key 名，两者必须严格一致，否则系统找不到图。
  */
 class FormImages {
-  img: number = 0;
+  cardImage: number = 0;
 }
 
 /**
@@ -149,6 +165,16 @@ class CardDataWithImage {
 export default class EntryFormAbility extends FormExtensionAbility {
   /** 数据层是否已初始化（FormExtensionAbility 的 context 不是 UIAbilityContext） */
   private storeReady: boolean = false;
+
+  /**
+   * url → 已打开的只读 fd。
+   *
+   * 为什么不关：Form Kit 把 bindingData 交给卡片进程后**异步**去读 fd 指向的文件，
+   * 我们无法知道它读完了没有。曾经的做法是 updateForm resolve 后立刻 closeSync，
+   * 结果图区恒黑（2026-11-02 桌面实测，日志 image=true 但卡片没图）。
+   * 扩展进程 10 秒即焚，泄漏几个 fd 的代价远小于图片出不来。
+   */
+  private openFds: Map<string, number> = new Map<string, number>();
 
   /**
    * 初始化 L2 文件缓存。
@@ -351,6 +377,13 @@ export default class EntryFormAbility extends FormExtensionAbility {
     if (url.length === 0) {
       return -1;
     }
+    // 同一个 url 复用已打开的 fd：Form Kit 是**异步**读这个 fd 的，
+    // 关早了卡片就拿到一个失效句柄 → 图区纯黑（2026-11-02 桌面实测踩中）。
+    // 扩展进程 10 秒即焚，进程退出时系统回收，这里不主动 close。
+    const reused: number | undefined = this.openFds.get(url);
+    if (reused !== undefined && reused >= 0) {
+      return reused;
+    }
     const path: string = this.cachePathOf(url);
     if (!this.fileExists(path)) {
       hilog.info(DOMAIN, TAG, 'fd: no cache %{public}s', path);
@@ -359,6 +392,7 @@ export default class EntryFormAbility extends FormExtensionAbility {
     try {
       const file: fs.File = fs.openSync(path, fs.OpenMode.READ_ONLY);
       hilog.info(DOMAIN, TAG, 'fd: open ok %{public}s fd=%{public}d', path, file.fd);
+      this.openFds.set(url, file.fd);
       return file.fd;
     } catch (e) {
       const err: BusinessError = e as BusinessError;
@@ -506,7 +540,12 @@ export default class EntryFormAbility extends FormExtensionAbility {
     if (hasImage) {
       const payload: CardDataWithImage = new CardDataWithImage();
       payload.copyFrom(data);
-      payload.formImages.img = fd;
+      payload.formImages.cardImage = fd;
+      // 关键：把 formImages 的 key 名写进 img 字段，系统据此把该字段换成可渲染图片。
+      // 官方示例见 @ohos.app.form.formBindingData 的 createFormBindingData 说明：
+      //   { 'imgSrc': 'image', 'formImages': { 'image': fd } }
+      // 留空串会导致卡片拿到 ''，图区恒黑（2026-11-02 桌面实测踩过）。
+      payload.img = IMAGE_KEY;
       binding = formBindingData.createFormBindingData(payload);
     } else {
       // 没图也要推：标题/日期/倒计时仍要走这条链路更新
@@ -522,11 +561,9 @@ export default class EntryFormAbility extends FormExtensionAbility {
       if (err.code !== ERR_FORM_NOT_FOUND) {
         hilog.warn(DOMAIN, TAG, 'updateForm failed: %{public}s', JSON.stringify(err));
       }
-    } finally {
-      if (hasImage) {
-        this.closeFd(fd);
-      }
     }
+    // ⚠ 不 closeFd：Form Kit 是异步读 fd 的，关早了卡片拿不到图。
+    // fd 由 openFds 缓存复用，进程退出时系统统一回收。
   }
 
   // ============ 生命周期 ============
@@ -552,7 +589,8 @@ export default class EntryFormAbility extends FormExtensionAbility {
     if (fd >= 0) {
       const payload: CardDataWithImage = new CardDataWithImage();
       payload.copyFrom(data);
-      payload.formImages.img = fd;
+      payload.formImages.cardImage = fd;
+      payload.img = IMAGE_KEY;   // 同上：必须给 key 名，不能留空串
       binding = formBindingData.createFormBindingData(payload);
       // ⚠ fd 不能在返回前 close：系统是在拿到 bindingData 之后才去读文件的
       // （关闭时机没有文档保证，交给下次更新时被新 fd 覆盖；
