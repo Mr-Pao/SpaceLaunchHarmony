@@ -54,7 +54,9 @@ const DIVIDER: string = '#1E2736';
 /** 页面左右内边距（与 TodayView / LaunchView 的 12 对齐） */
 const PAGE_PAD: number = 12;
 /** 底部 120：本页在主 tab 里，底部悬浮胶囊要占位 */
-const BOTTOM_PAD: number = 120;
+// 底部留白：本页是 NavDestination 二级页，胶囊在详情页打开时已被摘掉，
+// 不需要按 tab 根页那样让位 92~120，32 只够滑到底时最后一行不贴边。
+const BOTTOM_PAD: number = 32;
 
 // 提示条文案：**一字不改**。措辞是做过风险沟通的，「20% 上下 / Sentry 为 0」
 // 这两句是核心 —— 删掉就变成纯口号，反而更容易被误读成预警。

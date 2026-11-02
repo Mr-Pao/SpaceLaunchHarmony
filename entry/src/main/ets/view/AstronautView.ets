@@ -81,7 +81,9 @@ const PAGE_PAD: number = 12;
  * 本页虽由详情栈推入、胶囊此时已被 Index 摘掉，但留 120 是保险值 ——
  * 万一将来从 tab 内直接嵌进来，内容不会被胶囊盖住最后一格。
  */
-const BOTTOM_PAD: number = 120;
+// 底部留白：本页是 NavDestination 二级页，胶囊在详情页打开时已被摘掉，
+// 不需要按 tab 根页那样让位 92~120，32 只够滑到底时最后一行不贴边。
+const BOTTOM_PAD: number = 32;
 
 /** 简介折叠行数（任务书 6 行） */
 const BIO_FOLD_LINES: number = 6;

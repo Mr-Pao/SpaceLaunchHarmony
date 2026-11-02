@@ -57,7 +57,9 @@ const DIVIDER: string = '#12FFFFFF';
 
 const PAGE_PAD: number = 12;
 /** 底部留 120：搜索页在 tab 栈里，下面压着悬浮胶囊 */
-const BOTTOM_PAD: number = 120;
+// 底部留白：本页是 NavDestination 二级页，胶囊在详情页打开时已被摘掉，
+// 不需要按 tab 根页那样让位 92~120，32 只够滑到底时最后一行不贴边。
+const BOTTOM_PAD: number = 32;
 
 /** 每组最多显示 8 条，超出折成「还有 N 条」 */
 const GROUP_LIMIT: number = 8;

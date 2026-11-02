@@ -409,16 +409,44 @@ export struct GalleryView {
   @Builder
   header() {
     Row() {
-      Text('SPACE GALLERY')
-        .fontSize(10)
-        .fontWeight(FontWeight.Medium)
-        .fontColor(ACCENT)
-        .letterSpacing(1.5)
-      Text(this.countLabel())
-        .fontSize(11)
-        .fontColor('#6B7891')
-        .margin({ left: 8 })
-        .maxLines(1)
+      Row() {
+        Text('SPACE GALLERY')
+          .fontSize(10)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(ACCENT)
+          .letterSpacing(1.5)
+        Text(this.countLabel())
+          .fontSize(11)
+          .fontColor('#6B7891')
+          .margin({ left: 8 })
+          .maxLines(1)
+      }
+      .alignItems(VerticalAlign.Center)
+      .layoutWeight(1)
+
+      // 视频库入口。小程序那边视频库挂在 gallery-all 的第四个分段里，
+      // 鸿蒙侧图库主 tab 只有精选/NASA 两段，把入口放页头右侧比塞第三段更直接：
+      // 视频和图片是两种完全不同的浏览节奏，混在一个分段条里反而互相拖累。
+      Row() {
+        Text('▶')
+          .fontSize(9)
+          .fontColor(ACCENT)
+        Text('视频')
+          .fontSize(11.5)
+          .fontColor(ACCENT)
+          .margin({ left: 3 })
+        Text('›')
+          .fontSize(13)
+          .fontColor('#55617A')
+          .margin({ left: 2 })
+      }
+      .alignItems(VerticalAlign.Center)
+      .padding({ left: 9, right: 7, top: 4, bottom: 4 })
+      .borderRadius(11)
+      .backgroundColor('#1A2437')
+      .onClick(() => {
+        Nav.pushVideos('');
+      })
     }
     .width('100%')
     .alignItems(VerticalAlign.Center)

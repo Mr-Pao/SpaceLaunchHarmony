@@ -76,7 +76,9 @@ const CHIP_BG: string = '#1A2233';
 
 const PAGE_PAD: number = 12;
 /** 底部悬浮胶囊占位：胶囊是浮层，内容会铺到屏幕底，不垫就会压住最后一条 */
-const BOTTOM_PAD: number = 120;
+// 底部留白：本页是 NavDestination 二级页，胶囊在详情页打开时已被摘掉，
+// 不需要按 tab 根页那样让位 92~120，32 只够滑到底时最后一行不贴边。
+const BOTTOM_PAD: number = 32;
 const CARD_GAP: number = 8;
 
 // ============ 三个 tab 的下标 ============

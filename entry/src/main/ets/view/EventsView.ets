@@ -70,7 +70,9 @@ const IMG_H: number = 140;
 /** 页面左右内边距 12（与 TodayView / LaunchView / MineView 对齐） */
 const PAGE_PAD: number = 12;
 /** 底部预留 120：这一页可能在带悬浮胶囊的容器里，留够不让最后一张卡被压住 */
-const BOTTOM_PAD: number = 120;
+// 底部留白：本页是 NavDestination 二级页，胶囊在详情页打开时已被摘掉，
+// 不需要按 tab 根页那样让位 92~120，32 只够滑到底时最后一行不贴边。
+const BOTTOM_PAD: number = 32;
 
 // ============ 筛选枚举 ============
 

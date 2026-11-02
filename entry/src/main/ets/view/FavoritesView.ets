@@ -24,7 +24,9 @@ const TEXT_SUB: string = '#A7B4C7';
 const TEXT_DIM: string = '#55617A';
 const DANGER: string = '#F87171';
 const PAGE_PAD: number = 12;
-const BOTTOM_PAD: number = 120;
+// 底部留白：本页是 NavDestination 二级页，胶囊在详情页打开时已被摘掉，
+// 不需要按 tab 根页那样让位 92~120，32 只够滑到底时最后一行不贴边。
+const BOTTOM_PAD: number = 32;
 
 /**
  * 把一条精简收藏拼成卡片能吃的 LaunchSummary。

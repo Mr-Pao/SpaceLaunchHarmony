@@ -819,8 +819,8 @@ export struct StatsView {
         }
       }
       .width('100%')
-      // 底部 120vp：本页在详情页栈里可能盖到悬浮胶囊之上，留足让位
-      .padding({ left: 12, right: 12, bottom: 120 })
+      // bottom 32：本页在详情页栈里，胶囊此时已摘掉，不需要让位 120
+      .padding({ left: 12, right: 12, bottom: 32 })
     }
     .width('100%')
     .height('100%')

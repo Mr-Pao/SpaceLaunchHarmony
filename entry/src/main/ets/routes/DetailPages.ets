@@ -14,7 +14,7 @@
  */
 
 import { Nav } from './Nav';
-import { LaunchNavParam, PhotoNavParam, RocketNavParam, ArticleNavParam, AstronautNavParam, SearchNavParam } from './NavParam';
+import { LaunchNavParam, PhotoNavParam, RocketNavParam, ArticleNavParam, AstronautNavParam, SearchNavParam, VideoNavParam } from './NavParam';
 import { RocketDetailView } from '../view/RocketDetailView';
 import { PhotoDetailView } from '../view/PhotoDetailView';
 import { LaunchDetailView } from '../view/LaunchDetailView';
@@ -27,6 +27,7 @@ import { EventsView } from '../view/EventsView';
 import { FavoritesView } from '../view/FavoritesView';
 import { AstronautView } from '../view/AstronautView';
 import { SearchView } from '../view/SearchView';
+import { VideoGalleryView } from '../view/VideoGalleryView';
 
 const BG: string = '#0A0E17';
 const CARD: string = '#141A26';
@@ -302,6 +303,27 @@ export function AstronautPage(name: string, param: object) {
 export function SearchPage(name: string, param: object) {
   NavDestination() {
     SearchView({ initialKeyword: (param as SearchNavParam).keyword })
+  }
+  .hideTitleBar(true)
+  .backgroundColor(BG)
+  .onShown(() => {
+    Nav.markDetailShown();
+  })
+  .onHidden(() => {
+    Nav.markDetailHidden();
+  })
+}
+
+/**
+ * 视频库。
+ *
+ * initialUrl 传的是「要定位到的发射 UUID」——VideoGalleryView 内部按
+ * 前缀匹配把该发的视频排到最前，空串就是看全量。
+ */
+@Builder
+export function VideoGalleryPage(name: string, param: object) {
+  NavDestination() {
+    VideoGalleryView({ initialUrl: (param as VideoNavParam).launchId })
   }
   .hideTitleBar(true)
   .backgroundColor(BG)

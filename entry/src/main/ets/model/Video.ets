@@ -96,6 +96,12 @@ export interface VideoRow {
   /** 去重后的唯一键（就是 url），ForEach 的 key 用它 */
   vidKey: string;
   url: string;
+  /**
+   * 所属发射的 LL2 UUID（list[].id）。
+   * 路由从发射详情跳过来带的是这个 id 而不是视频链接，
+   * 所以定位要同时支持「按 url」与「按 launchId」两种入参。
+   */
+  launchId: string;
   /** 视频标题；空则回退发射名，再空则「发射视频」 */
   title: string;
   publisher: string;
@@ -222,6 +228,7 @@ export function flattenVideos(payload: VideosPayload, limit: number): VideoRow[]
       continue;
     }
     const net: string = vdStr(item.net);
+    const launchId: string = vdStr(item.id).trim();
     const launchName: string = vdStr(item.name).trim();
     const vids: VideoRef[] = item.vids !== undefined && item.vids !== null ? item.vids : [];
 
@@ -249,6 +256,7 @@ export function flattenVideos(payload: VideosPayload, limit: number): VideoRow[]
       const row: VideoRow = {
         vidKey: url,
         url: url,
+        launchId: launchId,
         title: title,
         publisher: vdStr(v.publisher).trim(),
         kind: vdStr(v.kind).trim(),

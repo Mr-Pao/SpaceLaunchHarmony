@@ -33,9 +33,9 @@ import { GalleryView } from '../view/GalleryView';
 import { RocketView } from '../view/RocketView';
 import { MineView } from '../view/MineView';
 import { FloatingTabBar } from '../components/FloatingTabBar';
-import { Nav, ROUTE_LAUNCH, ROUTE_PHOTO, ROUTE_ROCKET, ROUTE_ARTICLE, ROUTE_NEWSLIST, ROUTE_STATS, ROUTE_ASSETS, ROUTE_NEO, ROUTE_EVENTS, ROUTE_FAVORITES, NAV_DETAIL_DEPTH_KEY, ROUTE_ASTRONAUT, ROUTE_SEARCH } from '../routes/Nav';
-import { LaunchDetailPage, PhotoDetailPage, RocketDetailPage, ArticleDetailPage, NewsListPage, StatsPage, AssetsPage, NeoPage, EventsPage, FavoritesPage, AstronautPage, SearchPage } from '../routes/DetailPages';
-import { LaunchNavParam, PhotoNavParam, RocketNavParam, ArticleNavParam, AstronautNavParam, SearchNavParam } from '../routes/NavParam';
+import { Nav, ROUTE_LAUNCH, ROUTE_PHOTO, ROUTE_ROCKET, ROUTE_ARTICLE, ROUTE_NEWSLIST, ROUTE_STATS, ROUTE_ASSETS, ROUTE_NEO, ROUTE_EVENTS, ROUTE_FAVORITES, NAV_DETAIL_DEPTH_KEY, ROUTE_ASTRONAUT, ROUTE_SEARCH, ROUTE_VIDEOS } from '../routes/Nav';
+import { LaunchDetailPage, PhotoDetailPage, RocketDetailPage, ArticleDetailPage, NewsListPage, StatsPage, AssetsPage, NeoPage, EventsPage, FavoritesPage, AstronautPage, SearchPage, VideoGalleryPage } from '../routes/DetailPages';
+import { LaunchNavParam, PhotoNavParam, RocketNavParam, ArticleNavParam, AstronautNavParam, SearchNavParam, VideoNavParam } from '../routes/NavParam';
 
 @Entry
 @Component
@@ -123,6 +123,8 @@ struct Index {
       EventsPage(name)
     } else if (name === ROUTE_FAVORITES) {
       FavoritesPage(name)
+    } else if (name === ROUTE_VIDEOS) {
+      VideoGalleryPage(name, param as VideoNavParam)
     } else if (name === ROUTE_SEARCH) {
       SearchPage(name, param as SearchNavParam)
     } else if (name === ROUTE_ASTRONAUT) {

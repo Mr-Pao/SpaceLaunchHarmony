@@ -41,8 +41,8 @@ const VD_TABS: string[] = ['全部', '官方', '其他'];
 @Component
 export struct VideoGalleryView {
   /**
-   * 可选：指定先定位到某条视频（按 url 匹配）。
-   * 由路由参数带进来，可为空 —— 空串时就是普通的视频库列表。
+   * 可选：要定位到的目标。路由（routes/DetailPages.ets:326）传的是发射 UUID，
+   * 站内若改成传视频链接也照样能匹配。空串 = 普通视频库列表。
    */
   @Prop @Watch('onUrlChange') initialUrl: string = '';
 
@@ -63,14 +63,14 @@ export struct VideoGalleryView {
   /** 被 initialUrl 指定的那条，加个强调色边框方便一眼找到 */
   @State highlightKey: string = '';
 
-  /** 待定位的 url：路由可能先于数据到达，先存下来等数据齐了再消费 */
-  private pendingUrl: string = '';
+  /** 待定位的目标：可能是视频链接，也可能是发射 UUID。路由可能先于数据到达，先存着等数据齐了再消费 */
+  private pendingKey: string = '';
   /** 定位滚动的延迟定时器，必须在 aboutToDisappear 清掉 */
   private scrollTimer: number = -1;
   private scroller: Scroller = new Scroller();
 
   aboutToAppear(): void {
-    this.pendingUrl = this.initialUrl !== undefined && this.initialUrl !== null ? this.initialUrl.trim() : '';
+    this.pendingKey = this.initialUrl !== undefined && this.initialUrl !== null ? this.initialUrl.trim() : '';
     this.loadData();
   }
 
@@ -93,7 +93,9 @@ export struct VideoGalleryView {
     this.failed = false;
 
     const cached: VideosPayload | null = repo.peek<VideosPayload>('videos');
-    if (cached !== null && cached !== undefined) {
+    // peek 的返回类型就是 T | null，这里只判 null；即便真拿到 undefined，
+    // flattenVideos 内部也会兜住，不会崩
+    if (cached !== null) {
       this.applyPayload(cached);
       this.loaded = true;
     }
@@ -156,48 +158,62 @@ export struct VideoGalleryView {
   }
 
   /**
-   * @Watch 回调：路由指定了某条视频。
+   * @Watch 回调：路由指定了要定位的目标。
    * 回调**不再加装饰器**（Countdown 那边踩过：@Watch 只能装饰属性）。
+   *
+   * 入参可能是视频链接（站内跳转），也可能是发射 UUID（从发射详情进来）——
+   * 两种都支持，匹配时先按 url 精确找，再按 launchId 前缀找。
    */
   onUrlChange(): void {
-    const url: string = this.initialUrl !== undefined && this.initialUrl !== null
+    const key: string = this.initialUrl !== undefined && this.initialUrl !== null
       ? this.initialUrl.trim()
       : '';
-    if (url.length === 0) {
+    if (key.length === 0) {
       return;
     }
-    this.pendingUrl = url;
-    this.highlightKey = url;
+    this.pendingKey = key;
+    this.highlightKey = key;
     this.consumePending();
   }
 
   /**
-   * 消费 pendingUrl：把目标行拉进当前切片并滚过去。
+   * 消费 pendingKey：把目标行拉进当前切片并滚过去。
    * 目标不在库里（数据还没抓到这条）就静默放弃 —— 不能为了一个链接把整页搞成空白。
    */
   private consumePending(): void {
-    const url: string = this.pendingUrl;
-    if (url.length === 0 || this.allRows.length === 0) {
+    const key: string = this.pendingKey;
+    if (key.length === 0 || this.allRows.length === 0) {
       return;
     }
-    this.pendingUrl = '';
-    this.highlightKey = url;
+    this.pendingKey = '';
+    this.highlightKey = key;
 
-    // 官方筛选下未必包含目标，统一回「全部」，保证指定链接一定能被看到
+    // 官方筛选下未必包含目标，统一回「全部」，保证指定目标一定能被看到
     if (this.filterIdx !== 0) {
       this.filterIdx = 0;
     }
     const all: VideoRow[] = this.filteredRows();
     let idx: number = -1;
     for (let i = 0; i < all.length; i++) {
-      if (all[i].vidKey === url) {
+      // 链接优先：同一场发射往往有好几路直播，给了链接就别按发射挑第一个
+      if (all[i].url === key) {
         idx = i;
         break;
       }
     }
+    if (idx < 0 && key.length >= 8) {
+      // 没匹配到链接就当发射 UUID 处理。UUID 普遍 36 位，取 8 位前缀已经够区分，
+      // 又不会被空串或「1」「2」这种短参数误命中。
+      for (let i = 0; i < all.length; i++) {
+        if (all[i].launchId.length >= 8 && all[i].launchId.startsWith(key)) {
+          idx = i;
+          break;
+        }
+      }
+    }
     if (idx < 0) {
       this.resetSlice();
-      hilog.info(DOMAIN, TAG, '指定视频不在库中，忽略定位');
+      hilog.info(DOMAIN, TAG, '指定目标不在视频库中，忽略定位');
       return;
     }
 
@@ -212,6 +228,20 @@ export struct VideoGalleryView {
       this.scrollTimer = -1;
       this.scroller.scrollToIndex(idx, true);
     }, 60);
+  }
+
+  /**
+   * 这一行是不是被路由指定的目标。
+   * 入参可能是 url 也可能是发射 UUID，所以两种都要判；highlightKey 为空时恒 false。
+   */
+  private isHighlighted(row: VideoRow): boolean {
+    if (this.highlightKey.length === 0) {
+      return false;
+    }
+    if (this.highlightKey === row.url) {
+      return true;
+    }
+    return row.launchId.length >= 8 && row.launchId.startsWith(this.highlightKey);
   }
 
   /** 统一 toast 出口，方便将来换文案 */
@@ -307,7 +337,6 @@ export struct VideoGalleryView {
             .width('100%')
             .height('100%')
             .objectFit(ImageFit.Cover)
-            .alt($r('app.media.app_icon'))
             .draggable(false)
         } else {
           // 没有封面（镜像失败会保留空）就给一块纯色，别让卡片塌成一条线
@@ -375,7 +404,8 @@ export struct VideoGalleryView {
       .width('100%')
       .aspectRatio(16 / 9)
       .backgroundColor('#1B2330')
-      .borderRadius({ topLeft: 12, topRight: 12 })
+      // 圆角交给外层的卡片一起裁（外层 .clip(true)），这里单独给圆角会在封面
+      // 与文字区接缝处留出两道月牙形缺口
       .clip(true)
 
       // ── 文字区 ──
@@ -427,9 +457,11 @@ export struct VideoGalleryView {
     .width('100%')
     .backgroundColor('#141A26')
     .borderRadius(12)
+    // 封面上边缘要跟卡片圆角一致，所以让外层统一裁切，而不是各自画圆角
+    .clip(true)
     .border({
       width: 1,
-      color: this.highlightKey === row.vidKey ? '#38BDF8' : '#12FFFFFF'
+      color: this.isHighlighted(row) ? '#38BDF8' : '#12FFFFFF'
     })
     .onClick(() => {
       this.copyLink(row.url);
@@ -540,7 +572,8 @@ export struct VideoGalleryView {
     .height('100%')
     .backgroundColor('#0A0E17')
     .alignItems(HorizontalAlign.Start)
-    // bottom 120 是给悬浮 tabBar 让位，与其它二级页保持一致
-    .padding({ left: 12, right: 12, bottom: 120 })
+    // bottom 32：本页走 NavDestination 二级页（DetailPages.ets:324），
+    // 打开时 onHidden 已把悬浮胶囊摘掉，按 tab 根页那样留 120 会多出半屏空白
+    .padding({ left: 12, right: 12, bottom: 32 })
   }
 }
