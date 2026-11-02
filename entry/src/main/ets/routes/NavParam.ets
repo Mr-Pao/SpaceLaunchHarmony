@@ -187,3 +187,47 @@ export class SearchNavParam {
     this.keyword = keyword;
   }
 }
+
+/**
+ * 空间站详情入参。
+ *
+ * 只有 id 一项：spacestations 只有 15 条，详情页用 repo.peek 同步拿全量后按 id 匹配，
+ * 不需要调用方再传名字（传了反而两处可能不一致）。
+ * id 用 string：LL2 里它是 number，入口统一 String() 一次，页内只做字符串比较。
+ */
+export class StationNavParam {
+  /** spacestations 的 id（number 转字符串），空串表示匹配不到 */
+  id: string = '';
+
+  constructor(id: string) {
+    this.id = id;
+  }
+}
+
+/**
+ * 远征队详情入参。
+ *
+ * 与 StationNavParam 同构：expeditions 165 条、体积小，页内 peek 全量按 id 匹配。
+ */
+export class ExpeditionNavParam {
+  /** expeditions 的 id（number 转字符串） */
+  id: string = '';
+
+  constructor(id: string) {
+    this.id = id;
+  }
+}
+
+/**
+ * 活动（EVA / 入轨 / 对接）详情入参。
+ *
+ * events 只有 26 条，同样是页内 peek 全量后按 id 匹配。
+ */
+export class EventNavParam {
+  /** events 的 id（number 转字符串） */
+  id: string = '';
+
+  constructor(id: string) {
+    this.id = id;
+  }
+}

@@ -33,9 +33,9 @@ import { GalleryView } from '../view/GalleryView';
 import { RocketView } from '../view/RocketView';
 import { MineView } from '../view/MineView';
 import { FloatingTabBar } from '../components/FloatingTabBar';
-import { Nav, ROUTE_LAUNCH, ROUTE_PHOTO, ROUTE_ROCKET, ROUTE_ARTICLE, ROUTE_NEWSLIST, ROUTE_STATS, ROUTE_ASSETS, ROUTE_NEO, ROUTE_EVENTS, ROUTE_FAVORITES, NAV_DETAIL_DEPTH_KEY, ROUTE_ASTRONAUT, ROUTE_SEARCH, ROUTE_VIDEOS, ROUTE_AGENCY, ROUTE_PAD } from '../routes/Nav';
-import { LaunchDetailPage, PhotoDetailPage, RocketDetailPage, ArticleDetailPage, NewsListPage, StatsPage, AssetsPage, NeoPage, EventsPage, FavoritesPage, AstronautPage, SearchPage, VideoGalleryPage, AgencyPage, PadPage } from '../routes/DetailPages';
-import { LaunchNavParam, PhotoNavParam, RocketNavParam, ArticleNavParam, AstronautNavParam, SearchNavParam, VideoNavParam, AgencyNavParam, PadNavParam } from '../routes/NavParam';
+import { Nav, ROUTE_LAUNCH, ROUTE_PHOTO, ROUTE_ROCKET, ROUTE_ARTICLE, ROUTE_NEWSLIST, ROUTE_STATS, ROUTE_ASSETS, ROUTE_NEO, ROUTE_EVENTS, ROUTE_FAVORITES, NAV_DETAIL_DEPTH_KEY, ROUTE_ASTRONAUT, ROUTE_SEARCH, ROUTE_VIDEOS, ROUTE_STATIONS, ROUTE_STATION, ROUTE_EXPEDITION, ROUTE_EVENT, ROUTE_VERSION, ROUTE_AGENCY, ROUTE_PAD } from '../routes/Nav';
+import { LaunchDetailPage, PhotoDetailPage, RocketDetailPage, ArticleDetailPage, NewsListPage, StatsPage, AssetsPage, NeoPage, EventsPage, FavoritesPage, AstronautPage, SearchPage, VideoGalleryPage, StationsPage, StationPage, ExpeditionPage, EventPage, VersionPage, AgencyPage, PadPage } from '../routes/DetailPages';
+import { LaunchNavParam, PhotoNavParam, RocketNavParam, ArticleNavParam, AstronautNavParam, SearchNavParam, VideoNavParam, StationNavParam, ExpeditionNavParam, EventNavParam, AgencyNavParam, PadNavParam } from '../routes/NavParam';
 
 @Entry
 @Component
@@ -131,6 +131,18 @@ struct Index {
       VideoGalleryPage(name, param as VideoNavParam)
     } else if (name === ROUTE_SEARCH) {
       SearchPage(name, param as SearchNavParam)
+    } else if (name === ROUTE_VERSION) {
+      // 版本记录无入参
+      VersionPage(name)
+    } else if (name === ROUTE_STATIONS) {
+      // 空间站列表无入参
+      StationsPage(name)
+    } else if (name === ROUTE_STATION) {
+      StationPage(name, param as StationNavParam)
+    } else if (name === ROUTE_EXPEDITION) {
+      ExpeditionPage(name, param as ExpeditionNavParam)
+    } else if (name === ROUTE_EVENT) {
+      EventPage(name, param as EventNavParam)
     } else if (name === ROUTE_ASTRONAUT) {
       // 航天员页有入参，必须把 param 一起传下去（其它无参页只传 name 就够）
       AstronautPage(name, param as AstronautNavParam)

@@ -43,7 +43,7 @@ import { fileStore } from '../data/FileStore';
 import { FILES, DATA_VERSION } from '../constants/Dataset';
 import { formatGeneratedAt } from '../utils/Format';
 import { StarField } from '../components/StarField';
-import { Nav, ROUTE_STATS, ROUTE_ASSETS, ROUTE_NEO, ROUTE_EVENTS, ROUTE_FAVORITES } from '../routes/Nav';
+import { Nav, ROUTE_STATS, ROUTE_ASSETS, ROUTE_NEO, ROUTE_EVENTS, ROUTE_FAVORITES, ROUTE_VERSION } from '../routes/Nav';
 import { favInit, favCount, FAV_VERSION_KEY } from '../data/Favorites';
 import { common } from '@kit.AbilityKit';
 
@@ -772,8 +772,18 @@ export struct MineView {
         Text('v' + APP_VERSION)
           .fontSize(12)
           .fontColor(TEXT_SECONDARY)
+        Text('›')
+          .fontSize(14)
+          .fontColor(TEXT_TERTIARY)
+          .margin({ left: 6 })
       }
       .width('100%')
+      // 版本行整行可点 → 版本记录页。小程序这里也是「版本记录」独立页，
+      // 但入口在「我的 → 关于」分组里单独一行；鸿蒙侧版本号直接就是入口，
+      // 少一行、语义一样（点版本号看版本记录是通用直觉）。
+      .onClick(() => {
+        Nav.pushBlank(ROUTE_VERSION);
+      })
 
       Row() {
         Text('构建')

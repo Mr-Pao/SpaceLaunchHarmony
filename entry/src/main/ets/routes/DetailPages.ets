@@ -14,7 +14,7 @@
  */
 
 import { Nav } from './Nav';
-import { LaunchNavParam, PhotoNavParam, RocketNavParam, ArticleNavParam, AstronautNavParam, SearchNavParam, VideoNavParam, AgencyNavParam, PadNavParam } from './NavParam';
+import { LaunchNavParam, PhotoNavParam, RocketNavParam, ArticleNavParam, AstronautNavParam, SearchNavParam, VideoNavParam, AgencyNavParam, PadNavParam, EventNavParam, StationNavParam, ExpeditionNavParam } from './NavParam';
 import { RocketDetailView } from '../view/RocketDetailView';
 import { PhotoDetailView } from '../view/PhotoDetailView';
 import { LaunchDetailView } from '../view/LaunchDetailView';
@@ -30,6 +30,13 @@ import { SearchView } from '../view/SearchView';
 import { VideoGalleryView } from '../view/VideoGalleryView';
 import { AgencyView } from '../view/AgencyView';
 import { PadView } from '../view/PadView';
+import { EvItem } from '../model/Event';
+import { StationsView } from '../view/StationsView';
+import { StationDetailView } from '../view/StationDetailView';
+import { ExpeditionView } from '../view/ExpeditionView';
+import { EventDetailView } from '../view/EventDetailView';
+import { VersionView } from '../view/VersionView';
+import { StnItem, StnExpedition } from '../model/Station';
 
 const BG: string = '#0A0E17';
 const CARD: string = '#141A26';
@@ -237,7 +244,12 @@ export function NeoPage(name: string) {
 @Builder
 export function EventsPage(name: string) {
   NavDestination() {
-    EventsView()
+    // 点击卡片进活动详情。events 26 条、id 是 number，这里统一 String() 一次。
+    EventsView({
+      onOpen: (item: EvItem) => {
+        Nav.pushEvent(new EventNavParam(String(item.id)));
+      }
+    })
   }
   .hideTitleBar(true)
   .backgroundColor(BG)
@@ -372,6 +384,132 @@ export function PadPage(name: string, param: object) {
       padName: (param as PadNavParam).name,
       padPlace: (param as PadNavParam).place
     })
+  }
+  .hideTitleBar(true)
+  .backgroundColor(BG)
+  .onShown(() => {
+    Nav.markDetailShown();
+  })
+  .onHidden(() => {
+    Nav.markDetailHidden();
+  })
+}
+
+
+/**
+ * 空间站列表页。无入参，15 条全量在页内加载。
+ *
+ * 点击进详情时把 id 转成字符串 —— model 层 id 是 number（LL2 原样），
+ * 路由层统一用 string，两边各转一次容易漏，入口收敛一处。
+ */
+@Builder
+export function StationsPage(name: string) {
+  NavDestination() {
+    StationsView({
+      onOpen: (item: StnItem) => {
+        Nav.pushStation(new StationNavParam(String(item.id)));
+      }
+    })
+  }
+  .hideTitleBar(true)
+  .backgroundColor(BG)
+  .onShown(() => {
+    Nav.markDetailShown();
+  })
+  .onHidden(() => {
+    Nav.markDetailHidden();
+  })
+}
+
+/**
+ * 空间站详情页。
+ *
+ * 站内的「远征队」行再压一层：空间站 → 远征队 → 乘组 → 航天员，
+ * 是这几个页面里最深的一条链，但每层都有返回，不需要额外的面包屑。
+ */
+@Builder
+export function StationPage(name: string, param: object) {
+  NavDestination() {
+    StationDetailView({
+      stationId: (param as StationNavParam).id,
+      onOpenExpedition: (item: StnExpedition) => {
+        Nav.pushExpedition(new ExpeditionNavParam(String(item.id)));
+      }
+    })
+  }
+  .hideTitleBar(true)
+  .backgroundColor(BG)
+  .onShown(() => {
+    Nav.markDetailShown();
+  })
+  .onHidden(() => {
+    Nav.markDetailHidden();
+  })
+}
+
+/**
+ * 远征队详情页。
+ *
+ * 三个回调分别去 空间站 / 看图器 / 航天员。
+ * 徽章图走看图器而不是内置灯箱：工程只有一个看图器，重复实现手势缩放不划算。
+ */
+@Builder
+export function ExpeditionPage(name: string, param: object) {
+  NavDestination() {
+    ExpeditionView({
+      expeditionId: (param as ExpeditionNavParam).id,
+      onOpenStation: (id: string, stationName: string) => {
+        Nav.pushStation(new StationNavParam(id));
+      },
+      onOpenPhoto: (url: string, title: string) => {
+        Nav.pushPhoto(new PhotoNavParam(url, title));
+      },
+      onOpenAstronaut: (id: string, astroName: string) => {
+        Nav.pushAstronaut(new AstronautNavParam(id, astroName));
+      }
+    })
+  }
+  .hideTitleBar(true)
+  .backgroundColor(BG)
+  .onShown(() => {
+    Nav.markDetailShown();
+  })
+  .onHidden(() => {
+    Nav.markDetailHidden();
+  })
+}
+
+/**
+ * 活动详情页。关联发射点进去复用发射详情，参数口径与 EventsView 一致。
+ */
+@Builder
+export function EventPage(name: string, param: object) {
+  NavDestination() {
+    EventDetailView({
+      eventId: (param as EventNavParam).id,
+      onOpenLaunch: (id: string, net: string, title: string) => {
+        Nav.pushLaunch(new LaunchNavParam(id, net, title));
+      }
+    })
+  }
+  .hideTitleBar(true)
+  .backgroundColor(BG)
+  .onShown(() => {
+    Nav.markDetailShown();
+  })
+  .onHidden(() => {
+    Nav.markDetailHidden();
+  })
+}
+
+
+/**
+ * 版本记录页。无入参，纯常量渲染。
+ */
+@Builder
+export function VersionPage(name: string) {
+  NavDestination() {
+    VersionView()
   }
   .hideTitleBar(true)
   .backgroundColor(BG)

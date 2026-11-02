@@ -13,7 +13,7 @@
  * 注意：这里只做「转发」，不做任何 UI。所有跳转最终都落在 NavPathStack 上。
  */
 
-import { LaunchNavParam, PhotoNavParam, RocketNavParam, ArticleNavParam, AstronautNavParam, AgencyNavParam, PadNavParam, VideoNavParam, SearchNavParam } from './NavParam';
+import { LaunchNavParam, PhotoNavParam, RocketNavParam, ArticleNavParam, AstronautNavParam, AgencyNavParam, PadNavParam, VideoNavParam, SearchNavParam, StationNavParam, ExpeditionNavParam, EventNavParam } from './NavParam';
 
 /** 路由名常量 —— 与 Index.ets 的 PageMap 必须严格一致 */
 export const ROUTE_LAUNCH: string = 'launchDetail';
@@ -58,6 +58,27 @@ export const ROUTE_VIDEOS: string = 'videoGallery';
 
 /** 全局搜索页。入参只有初始关键词，走 pushSearch */
 export const ROUTE_SEARCH: string = 'searchPage';
+
+/**
+ * 空间站列表 / 空间站详情 / 远征队详情 / 活动详情。
+ *
+ * 空间站列表无入参（走 pushBlank），后三个各带 id、走独立 push。
+ * 这四页都不是「我的 → 探索」的直系入口，而是从航天员页、活动列表页、
+ * 空间站详情互相跳转过去的二三级页面。
+ */
+export const ROUTE_STATIONS: string = 'stationsList';
+export const ROUTE_STATION: string = 'stationDetail';
+export const ROUTE_EXPEDITION: string = 'expeditionDetail';
+export const ROUTE_EVENT: string = 'eventDetail';
+
+/**
+ * 版本记录页。
+ *
+ * 无入参（数据是编译期常量 constants/Changelog.ets），走 pushBlank。
+ * 单独声明而不是复用别的常量：它与「我的」页里那几格在语义上无关，
+ * 只是恰好都没有入参。
+ */
+export const ROUTE_VERSION: string = 'versionPage';
 
 /**
  * 详情页层数写进 AppStorage 用的 key。
@@ -171,6 +192,42 @@ export class Nav {
       return;
     }
     stack.pushPathByName(ROUTE_PAD, param);
+  }
+
+  /** 空间站列表（无入参） */
+  static pushStations(): void {
+    const stack: NavPathStack | null = Nav.current;
+    if (stack === null) {
+      return;
+    }
+    stack.pushPathByName(ROUTE_STATIONS, null);
+  }
+
+  /** 空间站详情 */
+  static pushStation(param: StationNavParam): void {
+    const stack: NavPathStack | null = Nav.current;
+    if (stack === null) {
+      return;
+    }
+    stack.pushPathByName(ROUTE_STATION, param);
+  }
+
+  /** 远征队详情 */
+  static pushExpedition(param: ExpeditionNavParam): void {
+    const stack: NavPathStack | null = Nav.current;
+    if (stack === null) {
+      return;
+    }
+    stack.pushPathByName(ROUTE_EXPEDITION, param);
+  }
+
+  /** 活动详情 */
+  static pushEvent(param: EventNavParam): void {
+    const stack: NavPathStack | null = Nav.current;
+    if (stack === null) {
+      return;
+    }
+    stack.pushPathByName(ROUTE_EVENT, param);
   }
 
   /** 视频库。launchId 为空串 = 看全量 */
