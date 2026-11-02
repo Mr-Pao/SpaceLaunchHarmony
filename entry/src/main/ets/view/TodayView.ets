@@ -53,9 +53,9 @@ import { StarField } from '../components/StarField';
 import { LaunchSummary, UpcomingPayload, OnThisDayItem, OnThisDayPayload } from '../model/Launch';
 import { AstronautCard, AstronautsInspacePayload } from '../model/Astronaut';
 import { ApodItem, EpicItem, ApodPayload, EpicPayload } from '../model/Apod';
-import { NewsItem, NewsPayload } from '../model/News';
+import { NewsItem, NewsPayload, NewsLaunchRef } from '../model/News';
 import { Nav } from '../routes/Nav';
-import { LaunchNavParam, PhotoNavParam } from '../routes/NavParam';
+import { LaunchNavParam, PhotoNavParam, ArticleNavParam } from '../routes/NavParam';
 
 const DOMAIN: number = 0x0000;
 const TAG: string = 'TodayView';
@@ -607,15 +607,29 @@ export struct TodayView {
   }
 
   /**
-   * 资讯：小程序侧因未配业务域名，web-view 打不开、只能「复制链接」。
-   * 鸿蒙侧同理没有内置浏览器，先只记日志，等做资讯详情页再接。
+   * 资讯详情：把列表里那条新闻整条摊进入参，详情页就不再拉一次全量 news.json。
+   * 小程序侧因未配业务域名，web-view 打不开、只能「复制链接」；鸿蒙侧同理没有内置浏览器，
+   * 所以详情页不提供「打开原文」，只提供复制。
    */
   private openNews(item: NewsItem): void {
-    this.logAction('打开资讯（待做资讯详情页）', strOf(item.title));
+    const p: ArticleNavParam = new ArticleNavParam();
+    p.id = item.id.toString();
+    p.title = strOf(item.title);
+    p.titleZh = strOf(item.titleZh);
+    p.summary = strOf(item.summary);
+    p.summaryZh = strOf(item.summaryZh);
+    p.image = strOf(item.image);
+    p.site = strOf(item.site);
+    p.url = strOf(item.url);
+    p.at = strOf(item.at);
+    // launchRefs 在 NewsItem 里是可选的，这里给空数组兜底，详情页就能直接判 length
+    const refs: NewsLaunchRef[] | undefined = item.launchRefs;
+    p.launchRefs = refs !== undefined && refs !== null ? refs : [];
+    Nav.pushArticle(p);
   }
 
   private openNewsList(): void {
-    this.logAction('打开发射资讯列表（待做）', '');
+    Nav.pushNewsList();
   }
 
   // ============ UI ============

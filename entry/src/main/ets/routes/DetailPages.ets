@@ -14,10 +14,12 @@
  */
 
 import { Nav } from './Nav';
-import { LaunchNavParam, PhotoNavParam, RocketNavParam } from './NavParam';
+import { LaunchNavParam, PhotoNavParam, RocketNavParam, ArticleNavParam } from './NavParam';
 import { RocketDetailView } from '../view/RocketDetailView';
 import { PhotoDetailView } from '../view/PhotoDetailView';
 import { LaunchDetailView } from '../view/LaunchDetailView';
+import { ArticleDetailView } from '../view/ArticleDetailView';
+import { NewsListView } from '../view/NewsListView';
 
 const BG: string = '#0A0E17';
 const CARD: string = '#141A26';
@@ -119,6 +121,44 @@ export function PhotoDetailPage(name: string, param: PhotoNavParam) {
 export function RocketDetailPage(name: string, param: RocketNavParam) {
   NavDestination() {
     RocketDetailView({ rocketName: param.name })
+  }
+  .hideTitleBar(true)
+  .backgroundColor(BG)
+  .onShown(() => {
+    Nav.markDetailShown();
+  })
+  .onHidden(() => {
+    Nav.markDetailHidden();
+  })
+}
+
+/**
+ * 资讯详情页。
+ * 整条新闻由列表页塞进入参，本页不拉网络 —— 点开即渲染，没有加载态可言。
+ */
+@Builder
+export function ArticleDetailPage(name: string, param: ArticleNavParam) {
+  NavDestination() {
+    ArticleDetailView({ param: param })
+  }
+  .hideTitleBar(true)
+  .backgroundColor(BG)
+  .onShown(() => {
+    Nav.markDetailShown();
+  })
+  .onHidden(() => {
+    Nav.markDetailHidden();
+  })
+}
+
+/**
+ * 资讯列表页。无入参，自己 load('news')。
+ * 同样必须带 onShown/onHidden —— 漏了 detailDepth 不涨，底部悬浮胶囊会盖住列表。
+ */
+@Builder
+export function NewsListPage(name: string) {
+  NavDestination() {
+    NewsListView()
   }
   .hideTitleBar(true)
   .backgroundColor(BG)

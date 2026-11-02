@@ -414,8 +414,9 @@ export struct LaunchDetailView {
       return;
     }
 
-    const opts: LoadOptions<NewsPayload> = {};
-    repo.load<NewsPayload>('news', opts)
+    // 不传 opts：报道只要「有就用、没有就整卡不显示」，不需要缓存回调，
+    // 也不用 force（用户翻回来看同一页时不该重新下 news.json）。
+    repo.load<NewsPayload>('news')
       .then((data: NewsPayload) => {
         // list 在 NewsPayload 里是必填字段，直接遍历即可
         const raw: NewsItem[] = data.list;
@@ -547,7 +548,9 @@ export struct LaunchDetailView {
     if (t > Date.now()) {
       return true;
     }
-    const st: LaunchStatus | undefined = this.item.status;
+    // 标注带上 null：LaunchStatus 本身不含 null，但 JSON 里 status 可能是显式 null，
+    // 只标 undefined 却在下一行判 null，标准 TS 会报「两个类型不可能相等」。
+    const st: LaunchStatus | null | undefined = this.item.status;
     const ab: string = st === undefined || st === null ? '' : strOf(st.abbrev);
     const final: boolean = ab === 'Success' || ab === 'Failure' || ab === 'Deployed' ||
       ab === 'Partial';

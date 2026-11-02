@@ -13,13 +13,15 @@
  * 注意：这里只做「转发」，不做任何 UI。所有跳转最终都落在 NavPathStack 上。
  */
 
-import { LaunchNavParam, PhotoNavParam, RocketNavParam } from './NavParam';
+import { LaunchNavParam, PhotoNavParam, RocketNavParam, ArticleNavParam } from './NavParam';
 
 /** 路由名常量 —— 与 Index.ets 的 PageMap 必须严格一致 */
 export const ROUTE_LAUNCH: string = 'launchDetail';
 export const ROUTE_PHOTO: string = 'photoDetail';
 export const ROUTE_ROCKET: string = 'rocketDetail';
 export const ROUTE_ARTICLE: string = 'articleDetail';
+/** 资讯列表页。它与 ROUTE_ARTICLE 是两个独立的页：列表 → 详情还能再压一层 */
+export const ROUTE_NEWSLIST: string = 'newsList';
 
 /**
  * 详情页层数写进 AppStorage 用的 key。
@@ -78,6 +80,29 @@ export class Nav {
       return;
     }
     stack.pushPathByName(ROUTE_ROCKET, param);
+  }
+
+  /**
+   * 跳到资讯详情。
+   *
+   * 入参是「整个 NewsItem 摊平后的 ArticleNavParam」，不是 id ——
+   * 详情页因此不需要再拉一次全量 news.json，点开即渲染。
+   */
+  static pushArticle(param: ArticleNavParam): void {
+    const stack: NavPathStack | null = Nav.current;
+    if (stack === null) {
+      return;
+    }
+    stack.pushPathByName(ROUTE_ARTICLE, param);
+  }
+
+  /** 跳到资讯列表（首页「查看全部 ›」的落点） */
+  static pushNewsList(): void {
+    const stack: NavPathStack | null = Nav.current;
+    if (stack === null) {
+      return;
+    }
+    stack.pushPathByName(ROUTE_NEWSLIST, null);
   }
 
   /** 返回上一页。栈为空时什么都不做（根页不能 pop） */

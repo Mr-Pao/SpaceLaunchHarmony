@@ -44,7 +44,8 @@ const THUMB_H: number = 72;
  * 全部可选：CI 的 slim 会按字段有无裁剪，缺字段是常态不是异常。
  */
 export interface RkLauncherRaw {
-  id?: string;
+  /** LL2 的 id 是数字（532 条实测全是 int），别照 string 读 */
+  id?: number | null;
   name?: string;
   full_name?: string;
   variant?: string;
@@ -144,7 +145,8 @@ export function rkFromRaw(raw: RkLauncherRaw): RkRocket {
   const name: string = strOf(raw.name);
   const fullName: string = strOf(raw.full_name);
   r.name = name.length > 0 ? name : fullName;
-  r.key = strOf(raw.id).length > 0 ? strOf(raw.id) : r.name;
+  const rid: string = raw.id === null || raw.id === undefined ? '' : raw.id.toString();
+  r.key = rid.length > 0 ? rid : r.name;
   r.maker = strOf(raw.manufacturer);
   r.img = strOf(raw.image);
   r.active = raw.active === true;

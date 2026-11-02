@@ -91,6 +91,16 @@ export struct GalleryView {
   /** NASA 已上屏条数 */
   @State nasaCount: number = 0;
   @State nasaLoading: boolean = false;
+  /**
+   * 追加中 / 已到末尾。
+   * 这两个是**追加锁**，本该是普通成员（锁本身不需要重绘），
+   * 但底部状态行要照着它们换文案（'正在加载更多…' / '已全部加载'），
+   * 写成普通成员的话文案永远停在初始值 —— 所以进 @State，
+   * 让唯一的读者（statusRow）跟着刷新。锁的语义不变。
+   */
+  @State appending: boolean = false;
+  @State ended: boolean = false;
+
   /** 精选首片失败：要和「真实空数据」区分开，否则弱网下会显示「暂无影像」误导用户 */
   @State failed: boolean = false;
 
@@ -110,10 +120,6 @@ export struct GalleryView {
   private nextIndex: number = 1;
   /** 总片数：只由索引文件更新，见文件头「终止条件」 */
   private chunks: number = 1;
-  /** 追加锁：onReachEnd 会连续触发多次，没有这把锁会重复请求同一片 */
-  private appending: boolean = false;
-  /** 已到末尾（追加锁之外的第二个闸门，避免空转） */
-  private ended: boolean = false;
 
   /** 还没结束的加载路数。收口逻辑同 TodayView：减到 0 才关 loading */
   private pending: number = 0;
@@ -481,24 +487,29 @@ export struct GalleryView {
         this.hint('暂无精选影像', '数据管道还没产出这一批', false)
       }
     } else {
-      // 必须包一层 layoutWeight：GalleryGrid 内部 WaterFlow 是 height('100%')，
-      // 直接和状态行并列会被撑满父级，把状态行挤出可视区
+      // 外层 Column 是 @Builder 的唯一根节点（ArkUI 要求分支内只能有一个根），
+      // 内层 Column 是为了给 WaterFlow 的 height('100%') 一个受约束的父级：
+      // 直接和状态行并列会被撑满，把状态行挤出可视区
       Column() {
-        GalleryGrid({
-          ds: this.featuredDs,
-          colCount: 3,
-          onSelect: (item: GxPhoto) => {
-            this.openPhoto(item);
-          },
-          onBottom: () => {
-            this.loadMore();
-          }
-        })
+        Column() {
+          GalleryGrid({
+            ds: this.featuredDs,
+            colCount: 3,
+            onSelect: (item: GxPhoto) => {
+              this.openPhoto(item);
+            },
+            onBottom: () => {
+              this.loadMore();
+            }
+          })
+        }
+        .layoutWeight(1)
+        .width('100%')
+
+        this.statusRow()
       }
       .layoutWeight(1)
       .width('100%')
-
-      this.statusRow()
     }
   }
 
@@ -513,25 +524,29 @@ export struct GalleryView {
       }
     } else {
       Column() {
-        GalleryGrid({
-          ds: this.nasaDs,
-          colCount: 2,
-          onSelect: (item: GxPhoto) => {
-            this.openPhoto(item);
-          },
-          onBottom: () => {
-          }
-        })
+        Column() {
+          GalleryGrid({
+            ds: this.nasaDs,
+            colCount: 2,
+            onSelect: (item: GxPhoto) => {
+              this.openPhoto(item);
+            },
+            onBottom: () => {
+            }
+          })
+        }
+        .layoutWeight(1)
+        .width('100%')
+
+        Text(`已加载全部 ${this.nasaCount} 张`)
+          .fontSize(10)
+          .fontColor(TXT_DIM)
+          .width('100%')
+          .textAlign(TextAlign.Center)
+          .padding({ top: 8, bottom: 4 })
       }
       .layoutWeight(1)
       .width('100%')
-
-      Text(`已加载全部 ${this.nasaCount} 张`)
-        .fontSize(10)
-        .fontColor(TXT_DIM)
-        .width('100%')
-        .textAlign(TextAlign.Center)
-        .padding({ top: 8, bottom: 4 })
     }
   }
 
