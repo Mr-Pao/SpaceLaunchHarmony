@@ -65,6 +65,7 @@ import {
 } from '../utils/Format';
 import { Countdown } from '../components/Countdown';
 import { Nav } from '../routes/Nav';
+import { PadNavParam } from '../routes/NavParam';
 import { LaunchNavParam, PhotoNavParam, RocketNavParam } from '../routes/NavParam';
 import { FavItem, favInit, favHas, favToggle } from '../data/Favorites';
 import { common } from '@kit.AbilityKit';
@@ -1836,12 +1837,29 @@ export struct LaunchDetailView {
           })
       }
 
-      Text(this.padName())
-        .fontSize(15)
-        .fontWeight(FontWeight.Medium)
-        .fontColor(TEXT_MAIN)
-        .width('100%')
-        .margin({ top: 10 })
+      // 工位名可点：LL2 的 pad 对象没带 id，只能拿名字去 pads 数据集里反查，
+      // 所以入参的 id 传空串、由 PadView 自己按 name 匹配。
+      Row() {
+        Text(this.padName())
+          .fontSize(15)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(TEXT_MAIN)
+          .layoutWeight(1)
+        if (this.padName().length > 0) {
+          Text('›')
+            .fontSize(15)
+            .fontColor(ACCENT)
+        }
+      }
+      .width('100%')
+      .margin({ top: 10 })
+      .alignItems(VerticalAlign.Center)
+      .onClick(() => {
+        if (this.padName().length === 0) {
+          return;
+        }
+        Nav.pushPad(new PadNavParam('', this.padName()));
+      })
 
       if (this.padPlace().length > 0) {
         Text(this.padPlace())

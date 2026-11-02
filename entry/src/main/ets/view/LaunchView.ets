@@ -1205,6 +1205,35 @@ export struct LaunchView {
 
       this.searchBox()
 
+      // 全局搜索入口。
+      // 抽屉里的搜索框只过滤「已加载的发射」，够不到航天员 / 工位 / 资讯；
+      // 想看全库就点这一行（替代小程序那个独立 search 页的入口）。
+      Row() {
+        Text('🔍')
+          .fontSize(12)
+        Text('去全局搜索：火箭 / 机构 / 航天员 / 工位 / 资讯')
+          .fontSize(12)
+          .fontColor('#A7B4C7')
+          .layoutWeight(1)
+          .margin({ left: 6 })
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+        Text('›')
+          .fontSize(13)
+          .fontColor(ACCENT)
+      }
+      .width('100%')
+      .padding({ left: 12, right: 12, top: 9, bottom: 9 })
+      .borderRadius(10)
+      .backgroundColor('#0D1420')
+      .margin({ top: 8 })
+      .alignItems(VerticalAlign.Center)
+      .onClick(() => {
+        // 先把抽屉关掉再跳，否则返回时抽屉还开着，视觉上像没跳成功
+        this.sheetOpen = false;
+        Nav.pushSearch(this.keyword);
+      })
+
       if (this.groups().length === 0) {
         this.panelEmpty()
       } else {

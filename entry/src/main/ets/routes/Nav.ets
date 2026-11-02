@@ -13,7 +13,7 @@
  * 注意：这里只做「转发」，不做任何 UI。所有跳转最终都落在 NavPathStack 上。
  */
 
-import { LaunchNavParam, PhotoNavParam, RocketNavParam, ArticleNavParam, AstronautNavParam } from './NavParam';
+import { LaunchNavParam, PhotoNavParam, RocketNavParam, ArticleNavParam, AstronautNavParam, AgencyNavParam, PadNavParam, VideoNavParam, SearchNavParam } from './NavParam';
 
 /** 路由名常量 —— 与 Index.ets 的 PageMap 必须严格一致 */
 export const ROUTE_LAUNCH: string = 'launchDetail';
@@ -50,6 +50,14 @@ export const ROUTE_FAVORITES: string = 'favoritesPage';
  * 有入参（id + 姓名），所以不能走 pushBlank；单独声明常量 + 独立 push 方法。
  */
 export const ROUTE_ASTRONAUT: string = 'astronautDetail';
+
+/** 机构详情 / 工位详情 / 视频库。三者都有入参，各走独立 push 方法 */
+export const ROUTE_AGENCY: string = 'agencyDetail';
+export const ROUTE_PAD: string = 'padDetail';
+export const ROUTE_VIDEOS: string = 'videoGallery';
+
+/** 全局搜索页。入参只有初始关键词，走 pushSearch */
+export const ROUTE_SEARCH: string = 'searchPage';
 
 /**
  * 详情页层数写进 AppStorage 用的 key。
@@ -145,6 +153,42 @@ export class Nav {
       return;
     }
     stack.pushPathByName(ROUTE_ASTRONAUT, param);
+  }
+
+  /** 机构详情 */
+  static pushAgency(param: AgencyNavParam): void {
+    const stack: NavPathStack | null = Nav.current;
+    if (stack === null) {
+      return;
+    }
+    stack.pushPathByName(ROUTE_AGENCY, param);
+  }
+
+  /** 工位详情 */
+  static pushPad(param: PadNavParam): void {
+    const stack: NavPathStack | null = Nav.current;
+    if (stack === null) {
+      return;
+    }
+    stack.pushPathByName(ROUTE_PAD, param);
+  }
+
+  /** 视频库。launchId 为空串 = 看全量 */
+  static pushVideos(launchId: string): void {
+    const stack: NavPathStack | null = Nav.current;
+    if (stack === null) {
+      return;
+    }
+    stack.pushPathByName(ROUTE_VIDEOS, new VideoNavParam(launchId));
+  }
+
+  /** 全局搜索。kw 为空串 = 进页后只显示「能搜什么」的引导 */
+  static pushSearch(kw: string): void {
+    const stack: NavPathStack | null = Nav.current;
+    if (stack === null) {
+      return;
+    }
+    stack.pushPathByName(ROUTE_SEARCH, new SearchNavParam(kw));
   }
 
   /**

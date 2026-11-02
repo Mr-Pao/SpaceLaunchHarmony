@@ -113,13 +113,21 @@ export interface AstronautEva {
  *
  * 就 8 个键，顺序与 scripts/sync.js:391 的
  *   ASTRO_CARD_FIELDS = ['id','name','nameZh','nation','agencyName','days','inSpace','img']
- * 一致。同样按产品约定不声明 nameZh（数据里其实有）。
+ * 一致。nameZh 见下方字段注释（2026-11-03 起声明）。
  *
  * **注意 desc**：这 8 个里没有 desc/bio，所以卡片上不能显示简介。
  */
 export interface AstronautCard {
   id: number;
   name: string;
+  /**
+   * CI 回填的中文名（astronauts-search 862 条里 830 条非空）。
+   *
+   * 2026-11-03 从「不声明」改成「声明」：全局搜索页要按中文名搜人，
+   * 而 CHINA_ASTRO_ZH 只覆盖中国籍 31 人，其余国家的人没有中文名就永远搜不到。
+   * 数据侧本来就带这个字段，声明它不增加任何传输成本。
+   */
+  nameZh?: string;
   nation?: string;
   agencyName?: string;
   days?: number;

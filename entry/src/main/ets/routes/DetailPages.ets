@@ -14,7 +14,7 @@
  */
 
 import { Nav } from './Nav';
-import { LaunchNavParam, PhotoNavParam, RocketNavParam, ArticleNavParam, AstronautNavParam } from './NavParam';
+import { LaunchNavParam, PhotoNavParam, RocketNavParam, ArticleNavParam, AstronautNavParam, SearchNavParam } from './NavParam';
 import { RocketDetailView } from '../view/RocketDetailView';
 import { PhotoDetailView } from '../view/PhotoDetailView';
 import { LaunchDetailView } from '../view/LaunchDetailView';
@@ -26,6 +26,7 @@ import { NeoView } from '../view/NeoView';
 import { EventsView } from '../view/EventsView';
 import { FavoritesView } from '../view/FavoritesView';
 import { AstronautView } from '../view/AstronautView';
+import { SearchView } from '../view/SearchView';
 
 const BG: string = '#0A0E17';
 const CARD: string = '#141A26';
@@ -280,6 +281,27 @@ export function FavoritesPage(name: string) {
 export function AstronautPage(name: string, param: object) {
   NavDestination() {
     AstronautView({ astronautId: (param as AstronautNavParam).id })
+  }
+  .hideTitleBar(true)
+  .backgroundColor(BG)
+  .onShown(() => {
+    Nav.markDetailShown();
+  })
+  .onHidden(() => {
+    Nav.markDetailHidden();
+  })
+}
+
+/**
+ * 全局搜索。
+ *
+ * 关键词只作为「初始值」传一次 —— 进页后键盘输入由 SearchView 自己管，
+ * 不回调路由（否则每敲一个字都要 push 一次）。
+ */
+@Builder
+export function SearchPage(name: string, param: object) {
+  NavDestination() {
+    SearchView({ initialKeyword: (param as SearchNavParam).keyword })
   }
   .hideTitleBar(true)
   .backgroundColor(BG)

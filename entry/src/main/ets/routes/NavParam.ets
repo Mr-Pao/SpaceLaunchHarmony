@@ -115,3 +115,65 @@ export class AstronautNavParam {
     this.name = name;
   }
 }
+
+/**
+ * 机构详情入参。
+ *
+ * 同时带 id 和 name：LL2 的 agencies 里 id 是 number，而详情页拿到的可能是
+ * 从 pads / launchers 里带出来的名字（那些地方只有 agency 名没有 id）。
+ * 两个都传，页内先按 id 找、找不到再按名字匹配 —— 比在调用方判断更省事。
+ */
+export class AgencyNavParam {
+  /** LL2 agency id 的字符串形式，空串表示按名字匹配 */
+  id: string = '';
+  /** 机构名（英文原名），id 为空时用它兜底匹配 */
+  name: string = '';
+
+  constructor(id: string, name: string) {
+    this.id = id;
+    this.name = name;
+  }
+}
+
+/**
+ * 工位详情入参。理由同 AgencyNavParam：id 可能缺，name 常能从发射数据里拿到。
+ */
+export class PadNavParam {
+  id: string = '';
+  name: string = '';
+
+  constructor(id: string, name: string) {
+    this.id = id;
+    this.name = name;
+  }
+}
+
+/**
+ * 视频库入参。
+ *
+ * 目前只有「从发射详情点进来时定位到某个发射的视频」这一种用法，
+ * 所以只带 launchId；空串表示看全量视频列表。
+ */
+export class VideoNavParam {
+  /** LL2 发射 UUID，空串表示不筛选 */
+  launchId: string = '';
+
+  constructor(launchId: string) {
+    this.launchId = launchId;
+  }
+}
+
+/**
+ * 全局搜索入参。
+ *
+ * 只有「进页时的初始关键词」一项：搜索本身在页内即时过滤，
+ * 不进路由参数（否则每敲一个字都要 push 一次）。
+ */
+export class SearchNavParam {
+  /** 进页即填进输入框的关键词，空串表示只显示「可以搜什么」的引导 */
+  keyword: string = '';
+
+  constructor(keyword: string) {
+    this.keyword = keyword;
+  }
+}
