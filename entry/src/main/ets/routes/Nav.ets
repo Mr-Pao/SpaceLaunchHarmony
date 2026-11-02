@@ -13,7 +13,7 @@
  * 注意：这里只做「转发」，不做任何 UI。所有跳转最终都落在 NavPathStack 上。
  */
 
-import { LaunchNavParam, PhotoNavParam, RocketNavParam, ArticleNavParam } from './NavParam';
+import { LaunchNavParam, PhotoNavParam, RocketNavParam, ArticleNavParam, AstronautNavParam } from './NavParam';
 
 /** 路由名常量 —— 与 Index.ets 的 PageMap 必须严格一致 */
 export const ROUTE_LAUNCH: string = 'launchDetail';
@@ -34,6 +34,22 @@ export const ROUTE_STATS: string = 'statsPage';
 export const ROUTE_ASSETS: string = 'assetsPage';
 export const ROUTE_NEO: string = 'neoPage';
 export const ROUTE_EVENTS: string = 'eventsPage';
+
+/**
+ * 收藏清单页。
+ *
+ * 与上面四页同样无入参（数据来自本机 preferences，不碰网络），
+ * 所以也走 pushBlank。单独声明而不是复用某个常量：路由名是持久化契约，
+ * 将来给收藏页加入参时不会连带影响其它页。
+ */
+export const ROUTE_FAVORITES: string = 'favoritesPage';
+
+/**
+ * 航天员详情页。
+ *
+ * 有入参（id + 姓名），所以不能走 pushBlank；单独声明常量 + 独立 push 方法。
+ */
+export const ROUTE_ASTRONAUT: string = 'astronautDetail';
 
 /**
  * 详情页层数写进 AppStorage 用的 key。
@@ -115,6 +131,20 @@ export class Nav {
       return;
     }
     stack.pushPathByName(ROUTE_NEWSLIST, null);
+  }
+
+  /**
+   * 跳到航天员详情。
+   *
+   * AstronautCard.id 是 number，这里统一 String() 一次再进路由 ——
+   * 详情页内部只做字符串比较，入口收敛一处，避免两边都转。
+   */
+  static pushAstronaut(param: AstronautNavParam): void {
+    const stack: NavPathStack | null = Nav.current;
+    if (stack === null) {
+      return;
+    }
+    stack.pushPathByName(ROUTE_ASTRONAUT, param);
   }
 
   /**

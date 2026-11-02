@@ -25,8 +25,8 @@
  *      装不下 140rpx→70vp 的头像（会溢出）。故**按 wxss 取 7vp**，
  *      下边距保留 9vp；圆角按任务书 12vp（wxss 是 20rpx=10vp，纯视觉、不影响布局）。
  *   3. 卡片点击态：小程序有 hover-class（底色变 #1B2231）+ 跳宇航员详情。
- *      本阶段没有详情页，也没有传进来的跳转回调，所以**不加 onClick**，
- *      只保留静态卡片（避免「点了没反应」的假按钮）。
+ *      本组件自己不做跳转，但**向父级抛 onSelect 回调**（2026-11-03 补：
+ *      AstronautView 落地后才接上；此前无详情页时是纯静态卡片）。
  *   4. 右边缘只保留渐隐，**去掉那个「›」箭头**：任务书要求整层
  *      hitTestBehavior(HitTestMode.None)，而箭头在原实现里是 pointer-events:auto
  *      的可点元素；两者共存会要么箭头吃手势、要么箭头点不动，不如只留渐隐。
@@ -56,6 +56,12 @@ const CARD_H: number = 154;
 export struct InSpaceRow {
   /** 在轨人员卡片列表，父级单向传入 */
   @Prop list: AstronautCard[] = [];
+
+  /**
+   * 点某张卡片。早期没有详情页所以刻意不加 onClick（避免假按钮），
+   * 现在 AstronautView 已就位，补上回调由父级决定跳哪条栈。
+   */
+  onSelect: (item: AstronautCard) => void = () => {};
 
   /** 横滑控制器。当前只用于关闭滚动条/回弹，保留引用方便以后做「滑到末尾」 */
   private scroller: Scroller = new Scroller();
@@ -165,6 +171,9 @@ export struct InSpaceRow {
     .border({ width: 1, color: '#12FFFFFF' })
     .alignItems(HorizontalAlign.Start)
     .margin({ right: CARD_GAP })
+    .onClick(() => {
+      this.onSelect(item);
+    })
   }
 
   // ============ 右边缘渐隐 ============

@@ -96,3 +96,22 @@ export class ArticleNavParam {
    */
   launchRefs: NewsLaunchRef[] = [];
 }
+
+/**
+ * 航天员详情入参。
+ *
+ * id 用 string 而不是 number：AstronautCard.id 是 number，但路由参数、
+ * favorites 的 id、URL 都当字符串流转，统一在入口 String() 一次，
+ * 免得页内到处写 String(item.id) 比较。
+ */
+export class AstronautNavParam {
+  /** LL2 航天员数字 id 的字符串形式 */
+  id: string = '';
+  /** 姓名（英文原名，详情页拿到数据前先显示它，避免顶部空标题） */
+  name: string = '';
+
+  constructor(id: string, name: string) {
+    this.id = id;
+    this.name = name;
+  }
+}

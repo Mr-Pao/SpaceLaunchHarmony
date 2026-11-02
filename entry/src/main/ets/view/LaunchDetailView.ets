@@ -66,6 +66,8 @@ import {
 import { Countdown } from '../components/Countdown';
 import { Nav } from '../routes/Nav';
 import { LaunchNavParam, PhotoNavParam, RocketNavParam } from '../routes/NavParam';
+import { FavItem, favInit, favHas, favToggle } from '../data/Favorites';
+import { common } from '@kit.AbilityKit';
 
 const DOMAIN: number = 0x0000;
 const TAG: string = 'LaunchDetailView';
@@ -87,6 +89,8 @@ const TEXT_MAIN: string = '#FFFFFF';
 const TEXT_SUB: string = '#A7B4C7';
 const TEXT_DIM: string = '#55617A';
 const ACCENT: string = '#38BDF8';
+/** 收藏星亮色。与「我的」页虚线卡、收藏页保持一致 */
+const STAR: string = '#F5C33B';
 const CHIP_BG: string = '#16222F';
 const CHIP_BORDER: string = '#22303F';
 const DIVIDER: string = '#1E2836';
@@ -460,6 +464,9 @@ export struct LaunchDetailView {
   /** 时间线原始条数（>12 时卡片底部显示「共 N 条」） */
   @State tlTotal: number = 0;
 
+  /** 是否已收藏本页这条发射。顶栏星标靠它决定实心还是空心 */
+  @State faved: boolean = false;
+
   /** 已经解析过时间线的发射 id；同一条发射不重复解析 */
   private tlIdCache: string = '';
 
@@ -477,7 +484,63 @@ export struct LaunchDetailView {
   // ============ 生命周期 ============
 
   aboutToAppear(): void {
+    // 收藏要先初始化：preferences 需要 Context，这里是本组件最早拿到 UIContext 的时机
+    const ctx: common.Context | undefined = this.getUIContext().getHostContext();
+    if (ctx !== undefined) {
+      favInit(ctx);
+    }
+    // 读一次收藏状态。必须在 loadDetail 之前也无妨 —— 它只看 id，
+    // 而 id 来自路由入参，不依赖数据是否已加载
+    this.syncFaved();
     this.loadDetail();
+  }
+
+  /** 从存储层同步一次星标状态。 */
+  private syncFaved(): void {
+    this.faved = favHas(this.idText());
+  }
+
+  /**
+   * 拼一条要落盘的收藏。
+   *
+   * 为什么字段来源要分开取：
+   *   - `param` 只有 id / net / title 三个字段（路由入参刻意做小），
+   *     所以 id / net 直接用 param；
+   *   - title 优先用页面显示的标题（missionName 可能已经把中文补上），
+   *     它比 param.title 更贴近用户看到的东西；
+   *   - rocketName / image / siteName 只能从已加载的 detail 里派生，
+   *     取不到就让对应派生方法返回空串（它们本身都做了判空）。
+   */
+  private buildFav(): FavItem {
+    const id: string = this.idText();
+    const title: string = this.missionName().length > 0 ? this.missionName() : this.titleText();
+    return new FavItem(
+      id,
+      strOf(this.param.net).trim(),
+      title,
+      this.rocketName(),
+      this.imageSrc(),
+      this.padName(),
+      Date.now()
+    );
+  }
+
+  /**
+   * 顶栏星标点击。
+   *
+   * toast 文案分开写两个分支而不是拼字符串：中文里「已收藏」与「已取消收藏」
+   * 不是简单的前缀关系，拼出来的「已」+「取消收藏」在语序上赌运气。
+   */
+  private onTapFav(): void {
+    if (this.idText().length === 0) {
+      return;
+    }
+    const now: boolean = favToggle(this.buildFav());
+    this.faved = now;
+    this.getUIContext().getPromptAction().showToast({
+      message: now ? '已收藏' : '已取消收藏',
+      duration: 1500
+    });
   }
 
   // ============ 加载 ============
@@ -1120,6 +1183,18 @@ export struct LaunchDetailView {
         .maxLines(1)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
         .layoutWeight(1)
+
+      // 收藏星标。放最右而不是紧贴返回键：收藏是本页的「操作」，
+      // 返回是「导航」，两者分居两端才不会点错。空态的引导文案也写的是「右上角 ☆」。
+      //
+      // 热区靠 padding 撑：20vp 的字直接当可点区域只有 20vp 见方，太难点。
+      Text(this.faved ? '★' : '☆')
+        .fontSize(20)
+        .fontColor(this.faved ? STAR : TEXT_SUB)
+        .padding({ left: 12, top: 8, bottom: 8, right: 2 })
+        .onClick(() => {
+          this.onTapFav();
+        })
     }
     .width('100%')
     .alignItems(VerticalAlign.Center)

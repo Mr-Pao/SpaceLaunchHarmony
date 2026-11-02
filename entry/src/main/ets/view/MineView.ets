@@ -14,13 +14,14 @@
  *   → CC-BY 署名页脚
  *
  * 与小程序的**有意差异**（各条都说明为什么，不是偷懒）：
- *   1. 统计三格换了内容：小程序的「收藏 0 / 提醒 0 / 版本」在鸿蒙侧是三个恒为 0 的
- *      假数字（收藏存储层尚未接入），留着只会误导。改成真实可诊断的三个数：
- *      数据集数（FILES.size）/ 数据版本（DATA_VERSION）/ 本地缓存项（repo.stats().diskKeys），
- *      下方再给一行真实缓存目录与占用 —— 这是排障时第一个要问的东西。
- *   2. 虚线提示卡换了文案：小程序写「在详情页点『☆ 收藏』或『提醒』」，而鸿蒙版详情页
- *      **还没有收藏/提醒按钮**，照抄就是骗用户去点一个不存在的东西。卡片、图标、
- *      边框、字号全部保持一致，只把「去哪点」改成诚实说法。
+ *   1. 统计三格：小程序的「收藏 0 / 提醒 0 / 版本」在鸿蒙侧曾经是三个恒为 0 的
+ *      假数字（收藏存储层尚未接入），留着只会误导。现在收藏已接入，第 3 格改回
+ *      **真实收藏数**（favCount()），前两格保持真实可诊断的数据集数（FILES.size）
+ *      与数据版本（DATA_VERSION）；缓存项数与缓存目录、占用一起放到下面那行小字里。
+ *      提醒功能仍未接入，所以不出现「提醒」格 —— 不摆一个永远点不动的假入口。
+ *   2. 虚线提示卡换了文案：小程序写「在详情页点『☆ 收藏』或『提醒』」。鸿蒙版现在
+ *      收藏已实现、提醒没有，所以文案只讲收藏，并整卡可点直达收藏清单。
+ *      卡片、图标、边框、字号全部保持一致。
  *   3. 四宫格点击跳到鸿蒙侧已实现的四个页面（StatsView / SpaceAssetsView /
  *      NeoView / EventsView），由 Index.ets 的 PageMap 分发、共用 Nav.pushBlank。
  *
@@ -42,7 +43,9 @@ import { fileStore } from '../data/FileStore';
 import { FILES, DATA_VERSION } from '../constants/Dataset';
 import { formatGeneratedAt } from '../utils/Format';
 import { StarField } from '../components/StarField';
-import { Nav, ROUTE_STATS, ROUTE_ASSETS, ROUTE_NEO, ROUTE_EVENTS } from '../routes/Nav';
+import { Nav, ROUTE_STATS, ROUTE_ASSETS, ROUTE_NEO, ROUTE_EVENTS, ROUTE_FAVORITES } from '../routes/Nav';
+import { favInit, favCount, FAV_VERSION_KEY } from '../data/Favorites';
+import { common } from '@kit.AbilityKit';
 
 const DOMAIN: number = 0x0000;
 const TAG: string = 'MineView';
@@ -70,6 +73,8 @@ const CARD_BG: string = '#141A26';
 const TEXT_SECONDARY: string = '#A7B4C7';
 const TEXT_TERTIARY: string = '#55617A';
 const ACCENT: string = '#38BDF8';
+/** 收藏星色（与详情页顶栏星标同色，跨页一致） */
+const STAR: string = '#F5C33B';
 const DIVIDER_COLOR: string = '#1E2637';
 /** 提示卡虚线边框色（小程序 1px #2a3547） */
 const DASH_COLOR: string = '#2A3547';
@@ -170,6 +175,23 @@ export struct MineView {
   @State cacheBytes: number = 0;
   /** 缓存目录（FileStore 未初始化时为空串） */
   @State cacheDir: string = '';
+  /**
+   * 收藏条数。
+   *
+   * 为什么不直接调 favCount() 当值用：@Builder 在渲染时求值，读不到变化；
+   * 必须是个 @State，改了才会重绘。
+   */
+  @State favTotal: number = 0;
+  /**
+   * 订阅收藏版本号（data/Favorites.ets 里每改一次收藏就 +1）。
+   *
+   * **这是「从收藏页返回后数字不更新」的解**：本页在 TabContent 里是保活的，
+   * `aboutToAppear` 一辈子只跑一次；`onPageShow` 在 TabContent 里也不触发；
+   * 收藏页压的是另一个 NavPathStack 的详情层，pop 回来不会重建本组件。
+   * 只有全局版本号能穿透这几种情况——不论用户是从收藏页删的、
+   * 还是在任意发射详情页点星标改的，数字都会跟着变。
+   */
+  @StorageProp(FAV_VERSION_KEY) @Watch('onFavChanged') favVersion: number = 0;
 
   /** 四个功能行。key 是给 onRow 用的稳定标识，不参与渲染 */
   private rows: MnRow[] = [
@@ -190,8 +212,29 @@ export struct MineView {
   // ============ 生命周期 ============
 
   aboutToAppear(): void {
+    // 收藏要显式初始化一次：preferences 需要 Context，而这里是首个拿得到
+    // `this.getUIContext()` 的时机（模块级没有 Context 可用）。
+    const ctx: common.Context | undefined = this.getUIContext().getHostContext();
+    if (ctx !== undefined) {
+      favInit(ctx);
+    }
+    this.readFavTotal();
     this.refreshCacheInfo();
     this.loadLastSync(false);
+  }
+
+  /**
+   * 收藏版本号变了就地重读，不重建组件也不依赖导航时机。
+   *
+   * 形参 `propName` 必须留着：@Watch 回调签名是 `(propName: string) => void`，
+   * 框架生成调用时总会传一个参数。
+   */
+  onFavChanged(propName: string): void {
+    this.readFavTotal();
+  }
+
+  private readFavTotal(): void {
+    this.favTotal = favCount();
   }
 
   // ============ 数据 ============
@@ -463,14 +506,15 @@ export struct MineView {
   @Builder
   statCell(index: number) {
     Column() {
-      // 第 3 格是缓存**项数**，数字本身不带单位，单位放到标签里，三格字号才齐
+      // 三格分别是：数据集数 / 数据版本 / 收藏数。
+      // 收藏数放第三格是刻意的：它和收藏页是同一份数据，用户核对时一眼能对得上。
       Text(index === 0 ? String(FILES.size) :
-        (index === 1 ? String(DATA_VERSION) : String(this.cachedCount)))
+        (index === 1 ? String(DATA_VERSION) : String(this.favTotal)))
         .fontSize(20)
         .fontWeight(FontWeight.Bold)
         .fontColor('#FFFFFF')
 
-      Text(index === 0 ? '数据集' : (index === 1 ? '数据版本' : '缓存项'))
+      Text(index === 0 ? '数据集' : (index === 1 ? '数据版本' : '收藏'))
         .fontSize(10)
         .fontColor(TEXT_LABEL)
         .margin({ top: 4 })
@@ -491,8 +535,10 @@ export struct MineView {
   /**
    * 数据概览：三格统计 + 一行真实缓存目录。
    *
-   * 为什么保留这一整块而不是只抄小程序的三个假数字：这页对用户的唯一实用价值
-   * 就是「我装了多少数据、存在哪、占多大」，收藏数在鸿蒙侧根本不存在。
+   * 三格给的是「数据面」的三个数（数据集 / 版本 / 收藏）；缓存项数与占用
+   * 这一行原本只在第三格里出现，现在挪到下面这行小字里 ——
+   * 这一页对用户的实用价值是「我装了多少数据、存在哪、占多大」，
+   * 三格数字换了也必须保住这三条信息，不能为了加收藏把它们挤掉。
    */
   @Builder
   overviewBlock() {
@@ -508,10 +554,11 @@ export struct MineView {
       .width('100%')
       .alignItems(VerticalAlign.Center)
 
-      // 真实路径（<filesDir>/dataCache/v{DATA_VERSION}/）+ 实际占用。
-      // 用户排查「缓存写在哪」就靠这一行，不给模糊说法
+      // 真实路径（<filesDir>/dataCache/v{DATA_VERSION}/）+ 实际占用 + 缓存项数。
+      // 用户排查「缓存写在哪」就靠这一行，不给模糊说法。
+      // 缓存项数从第三格挪到这里，是因为第三格让给了收藏数（见 statCell 注释）。
       Text((this.cacheDir.length > 0 ? this.cacheDir : '缓存目录尚未初始化') +
-        ' · ' + formatBytes(this.cacheBytes))
+        ' · ' + formatBytes(this.cacheBytes) + ' · ' + String(this.cachedCount) + ' 项')
         .width('100%')
         .fontSize(10)
         .fontColor(TEXT_TERTIARY)
@@ -531,24 +578,28 @@ export struct MineView {
   /**
    * 虚线提示卡（小程序同款 1vp 虚线 #2A3547、圆角 12）。
    *
-   * 文案与小程序不同，见文件头「有意差异 2」：鸿蒙版详情页还没有收藏/提醒按钮，
-   * 照抄「去详情页点☆」等于指路到空地。视觉结构（☆ + 两行小字 + 虚线框）保留。
+   * 文案与小程序不同，见文件头「有意差异 2」：小程序写「在详情页点『☆ 收藏』
+   * 或『提醒』」，鸿蒙版没有提醒功能，照抄就是骗用户去点不存在的东西。
+   * 现在收藏已真实可用，这张卡整块变成入口：点一下直达收藏清单。
+   * 视觉结构（☆ + 两行小字 + 虚线框）保持小程序原样。
    */
   @Builder
   hintCard() {
     Row() {
-      Text('☆')
+      Text(this.favTotal > 0 ? '★' : '☆')
         .fontSize(18)
-        .fontColor(ACCENT)
+        .fontColor(this.favTotal > 0 ? STAR : ACCENT)
         .margin({ right: 10 })
 
       Column() {
-        Text('收藏与提醒清单尚未接入鸿蒙版')
+        Text('点这里查看收藏清单')
           .fontSize(11)
           .fontColor(TEXT_HINT)
           .lineHeight(17)
 
-        Text('接入后，你在详情页标记的发射与活动会出现在这里')
+        Text(this.favTotal > 0
+          ? '已收藏 ' + String(this.favTotal) + ' 条发射，长按可移除'
+          : '在发射详情页点右上角 ☆ 就能收藏')
           .fontSize(11)
           .fontColor(TEXT_HINT)
           .lineHeight(17)
@@ -556,6 +607,12 @@ export struct MineView {
       }
       .alignItems(HorizontalAlign.Start)
       .layoutWeight(1)
+
+      // 右向箭头：暗示这张卡可点，不然虚线框看起来只是说明文字
+      Text('›')
+        .fontSize(18)
+        .fontColor(TEXT_TERTIARY)
+        .margin({ left: 8 })
     }
     .width('100%')
     .alignItems(VerticalAlign.Top)
@@ -565,6 +622,10 @@ export struct MineView {
     .borderColor(DASH_COLOR)
     .borderRadius(12)
     .margin({ bottom: 20 })
+    .onClick(() => {
+      // 无入参页，走 pushBlank（与四宫格里的统计/资产/天体/活动同一门面）
+      Nav.pushBlank(ROUTE_FAVORITES);
+    })
   }
 
   /** 分组标题：15vp Bold 白（小程序「探索」「关于」同档） */

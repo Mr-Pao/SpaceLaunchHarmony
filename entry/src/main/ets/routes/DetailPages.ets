@@ -14,7 +14,7 @@
  */
 
 import { Nav } from './Nav';
-import { LaunchNavParam, PhotoNavParam, RocketNavParam, ArticleNavParam } from './NavParam';
+import { LaunchNavParam, PhotoNavParam, RocketNavParam, ArticleNavParam, AstronautNavParam } from './NavParam';
 import { RocketDetailView } from '../view/RocketDetailView';
 import { PhotoDetailView } from '../view/PhotoDetailView';
 import { LaunchDetailView } from '../view/LaunchDetailView';
@@ -24,6 +24,8 @@ import { StatsView } from '../view/StatsView';
 import { SpaceAssetsView } from '../view/SpaceAssetsView';
 import { NeoView } from '../view/NeoView';
 import { EventsView } from '../view/EventsView';
+import { FavoritesView } from '../view/FavoritesView';
+import { AstronautView } from '../view/AstronautView';
 
 const BG: string = '#0A0E17';
 const CARD: string = '#141A26';
@@ -232,6 +234,52 @@ export function NeoPage(name: string) {
 export function EventsPage(name: string) {
   NavDestination() {
     EventsView()
+  }
+  .hideTitleBar(true)
+  .backgroundColor(BG)
+  .onShown(() => {
+    Nav.markDetailShown();
+  })
+  .onHidden(() => {
+    Nav.markDetailHidden();
+  })
+}
+
+/**
+ * 收藏清单页。
+ *
+ * 与上面九个页面完全同构：`NavDestination` 包一层视图、隐藏系统标题栏
+ * （自绘返回条）、背景统一 BG。
+ *
+ * onShown / onHidden 这两个钩子**不是可选的**：底部悬浮胶囊是 Index.ets 里
+ * Tabs 的兄弟节点，层级比 TabContent 高，详情页压进来也盖不住；
+ * 只有靠这两个钩子累加/减少 NAV_DETAIL_DEPTH_KEY 才能把它摘掉。
+ * 漏写的话，收藏页底下会一直浮着五个 tab 图标。
+ */
+@Builder
+export function FavoritesPage(name: string) {
+  NavDestination() {
+    FavoritesView()
+  }
+  .hideTitleBar(true)
+  .backgroundColor(BG)
+  .onShown(() => {
+    Nav.markDetailShown();
+  })
+  .onHidden(() => {
+    Nav.markDetailHidden();
+  })
+}
+
+/**
+ * 航天员详情。
+ *
+ * 同样必须写 onShown/onHidden —— 否则底部悬浮胶囊会浮在页面内容上。
+ */
+@Builder
+export function AstronautPage(name: string, param: object) {
+  NavDestination() {
+    AstronautView({ astronautId: (param as AstronautNavParam).id })
   }
   .hideTitleBar(true)
   .backgroundColor(BG)

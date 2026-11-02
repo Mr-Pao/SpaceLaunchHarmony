@@ -55,7 +55,7 @@ import { AstronautCard, AstronautsInspacePayload } from '../model/Astronaut';
 import { ApodItem, EpicItem, ApodPayload, EpicPayload } from '../model/Apod';
 import { NewsItem, NewsPayload, NewsLaunchRef } from '../model/News';
 import { Nav } from '../routes/Nav';
-import { LaunchNavParam, PhotoNavParam, ArticleNavParam } from '../routes/NavParam';
+import { LaunchNavParam, PhotoNavParam, ArticleNavParam, AstronautNavParam } from '../routes/NavParam';
 
 const DOMAIN: number = 0x0000;
 const TAG: string = 'TodayView';
@@ -696,7 +696,13 @@ export struct TodayView {
           })
 
           // 此刻在天上：空名单整块高度 0，不占位
-          InSpaceRow({ list: this.astronauts })
+          // 点某位在轨航天员 → 详情页。id 是 number，统一 String() 一次再进路由
+          InSpaceRow({
+            list: this.astronauts,
+            onSelect: (item: AstronautCard) => {
+              Nav.pushAstronaut(new AstronautNavParam(String(item.id), strOf(item.name)));
+            }
+          })
 
           // 航天资讯：组件只露前 limit 条，「查看全部 ›」回调给宿主
           NewsSection({
