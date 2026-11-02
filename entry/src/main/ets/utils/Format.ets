@@ -4,7 +4,8 @@
  * 对位原项目 utils/format.js（1340 行），**全量移植**：
  *   第一部分（本文件中段）：时间 / 状态 / 列表格式化；
  *   第二部分（本文件后段）：中文翻译层 —— 查表 + 规则推导。
- *   数据表本身在 constants/ZhMaps.ets（470 条，逐条与源文件对齐）。
+ *   数据表本身在 constants/ZhMaps.ets（21 张表 492 条，逐条与源文件对齐；
+ *   WEEK_ZH 例外，它本来就在本文件里）。
  *
  * 迁移原则：函数体逐行照抄，不做「顺手优化」。
  * 原项目里每一处 if/else 都是踩过坑之后写下的（见各函数注释），
@@ -20,7 +21,10 @@
  * 约定：本文件不出现 console.*，也不做任何 IO，全部为纯函数。
  */
 
-import { LaunchSummary, RocketConfig, LaunchProvider } from '../model/Common';
+import {
+  LaunchSummary, RocketConfig, LaunchProvider, LaunchRocket, LaunchMission,
+  OrbitInfo, LaunchStatus, LaunchPad, PadLocation,
+} from '../model/Common';
 import { AstronautCard } from '../model/Astronaut';
 import {
   CORE_STATUS, CoreStatusEntry,
@@ -230,7 +234,7 @@ export class StatusInfo {
 }
 
 export function statusOf(item: LaunchSummary): StatusInfo {
-  const st = item.status;
+  const st: LaunchStatus | undefined = item.status;
   const zh: string = strOf(st === undefined || st === null ? undefined : st.nameZh);
   const en: string = strOf(st === undefined || st === null ? undefined : st.name);
   const ab: string = strOf(st === undefined || st === null ? undefined : st.abbrev);
@@ -299,7 +303,7 @@ export function statusToneBg(tone: string): string {
  * 对位原项目 launchTitle() 里 mission 的那一半（型号那一半在 rocketLabelOf）。
  */
 export function missionLabelOf(item: LaunchSummary): string {
-  const m = item.mission;
+  const m: LaunchMission | undefined = item.mission;
   if (m !== undefined && m !== null) {
     const zh: string = strOf(m.nameZh);
     if (zh.length > 0) {
@@ -322,11 +326,11 @@ export function missionLabelOf(item: LaunchSummary): string {
  * 构型后缀的拼接判断也在 rocketFullName 里（「猎鹰 9 号 Block 5」）。
  */
 export function rocketLabelOf(item: LaunchSummary): string {
-  const rocket = item.rocket;
+  const rocket: LaunchRocket | undefined = item.rocket;
   if (rocket === undefined || rocket === null) {
     return '';
   }
-  const c = rocket.configuration;
+  const c: RocketConfig = rocket.configuration;
   if (c === undefined || c === null) {
     return '';
   }
@@ -335,7 +339,7 @@ export function rocketLabelOf(item: LaunchSummary): string {
 
 /** 发射机构。走 agencyLabel() 中文表（查不到截断到 15 字 + 省略号） */
 export function providerLabelOf(item: LaunchSummary): string {
-  const p = item.launch_service_provider;
+  const p: LaunchProvider | undefined = item.launch_service_provider;
   if (p === undefined || p === null) {
     return '';
   }
@@ -344,11 +348,11 @@ export function providerLabelOf(item: LaunchSummary): string {
 
 /** 目标轨道（近地轨道 / 地球同步转移轨道…）；表里没有的给原名或缩写 */
 export function orbitLabelOf(item: LaunchSummary): string {
-  const m = item.mission;
+  const m: LaunchMission | undefined = item.mission;
   if (m === undefined || m === null) {
     return '';
   }
-  const o = m.orbit;
+  const o: OrbitInfo | undefined = m.orbit;
   if (o === undefined || o === null) {
     return '';
   }
@@ -367,11 +371,11 @@ export function orbitLabelOf(item: LaunchSummary): string {
  * 地名表没命中时再退一步用 countryOf（至少给个国家名），仍为空才给原文。
  */
 export function placeLabelOf(item: LaunchSummary): string {
-  const pad2 = item.pad;
+  const pad2: LaunchPad | undefined = item.pad;
   if (pad2 === undefined || pad2 === null) {
     return '';
   }
-  const loc = pad2.location;
+  const loc: PadLocation | undefined = pad2.location;
   if (loc === undefined || loc === null) {
     return '';
   }
@@ -670,8 +674,12 @@ export function rocketName(config: RocketConfig): string {
       return hit;
     }
   }
-  for (let i = 0; i < candidates.length; i++) {
-    const hit: string = zhLongMarch(candidates[i]);
+  // 长征推导的候选顺序与查表**不同**：源文件是 full → bare → base → noUpper，
+  // 先试 full 保证 {name:'Long March', full_name:'Long March 5'} 拿到「长征五号」，
+  // 再试 bare 让 'Long March 5B Block 1' 也能落到「长征五号B」。
+  const marchCandidates: string[] = [full, bare, base, noUpper];
+  for (let i = 0; i < marchCandidates.length; i++) {
+    const hit: string = zhLongMarch(marchCandidates[i]);
     if (hit.length > 0) {
       return hit;
     }
@@ -789,12 +797,12 @@ export function launchTitle(item: LaunchSummary): string {
     return '';
   }
   let rocket: string = '';
-  const r = item.rocket;
+  const r: LaunchRocket | undefined = item.rocket;
   if (r !== undefined && r !== null) {
     rocket = rocketFullName(r.configuration);
   }
   let mission: string = '';
-  const m = item.mission;
+  const m: LaunchMission | undefined = item.mission;
   if (m !== undefined && m !== null) {
     const zh: string = strOf(m.nameZh);
     mission = cleanMission(fixTerms(zh.length > 0 ? zh : strOf(m.name)));
@@ -890,6 +898,9 @@ export function destName(value: string): string {
   return orb.length > 0 ? orb : s;
 }
 
+/** Salyut 1-7 → 礼炮一号…；其余站名靠 STATION_ZH 表 */
+const SALYUT_RE: RegExp = new RegExp('^Salyut\\s+(\\d+)$', 'i');
+
 /** 空间站中文名；Salyut 1-7 走编号规则推导（礼炮一号…） */
 export function stationName(raw: string): string {
   const s: string = strOf(raw).trim();
@@ -939,11 +950,11 @@ export function countryOf(item: LaunchSummary): string {
   if (item === undefined || item === null) {
     return '';
   }
-  const p = item.pad;
+  const p: LaunchPad | undefined = item.pad;
   if (p === undefined || p === null) {
     return '';
   }
-  const loc = p.location;
+  const loc: PadLocation | undefined = p.location;
   if (loc === undefined || loc === null) {
     return '';
   }
@@ -1033,7 +1044,7 @@ export function isStillUpcoming(item: LaunchSummary): boolean {
   if (d.getTime() > Date.now()) {
     return true;
   }
-  const st = item.status;
+  const st: LaunchStatus | undefined = item.status;
   const a: string = st === undefined || st === null ? '' : strOf(st.abbrev);
   return FINAL_STATUS.indexOf(a) === -1;
 }
@@ -1047,11 +1058,6 @@ export function clock(value: string): string {
   return pad(d.getHours()) + ':' + pad(d.getMinutes());
 }
 
-/**
- * 星期表。
- * ⚠ 源文件里它定义在 longDate 之前、todayLabel 内部也有一份；
- * 鸿蒙侧只保留这一份模块级常量，todayLabel 改为引用它（不再重复定义）。
- */
 /**
  * 星期表。
  *
@@ -1181,9 +1187,15 @@ export function padShort(name: string): string {
   const low: string = s.toLowerCase();
   for (let i = 0; i < prefixes.length; i++) {
     const p: string = prefixes[i];
-    if (low.startsWith(p)) {
-      return shorts[i] + s.substring(p.length).trim();
+    // 源文件是 /^Space Launch Complex\s+/ 替换 —— 前缀后面必须真跟空白，
+    // 否则名字就叫 "Launch Complex" 的条目会被改成 "LC-"。
+    if (!low.startsWith(p)) {
+      continue;
     }
+    if (low.length <= p.length || low.substring(p.length, p.length + 1) !== ' ') {
+      continue;
+    }
+    return shorts[i] + s.substring(p.length).trim();
   }
   return s;
 }
@@ -1236,9 +1248,6 @@ export function rocketFullName(config: RocketConfig): string {
   }
   return zhHasVariant ? zh : zh + ' ' + variant;
 }
-
-/** Salyut 1-7 → 礼炮一号…；其余站名靠 STATION_ZH 表 */
-const SALYUT_RE: RegExp = new RegExp('^Salyut\\s+(\\d+)$', 'i');
 
 /** 远征队名：Expedition 72 → 第 72 次远征 */
 const EXPEDITION_RE: RegExp = new RegExp('^Expedition\\s+(\\d+)$', 'i');

@@ -39,6 +39,7 @@ import { LaunchSummary, UpcomingPayload, PreviousPayload, UpcomingMorePayload } 
 // 显式标注比事后排查便宜
 import { LaunchStatus, LaunchMission } from '../model/Common';
 import { LaunchCard } from '../components/LaunchCard';
+import { LaunchCalendar } from '../components/LaunchCalendar';
 import { Nav } from '../routes/Nav';
 import { LaunchNavParam } from '../routes/NavParam';
 import { strOf, parseTime, formatGeneratedAt } from '../utils/Format';
@@ -64,6 +65,10 @@ const BOTTOM_PAD: number = 120;
 /** 分段枚举。用 number 常量而不是 enum：ArkTS 的 enum 在模板里比较时容易踩类型收窄 */
 const TAB_UPCOMING: number = 0;
 const TAB_PREVIOUS: number = 1;
+
+/** 视图模式：排期列表 / 日历。与 activeTab 正交，日历只画待发射 */
+const MODE_LIST: number = 0;
+const MODE_CALENDAR: number = 1;
 
 /**
  * 「已结束」状态白名单（对位 utils/format.js:979-988 的 FINAL_STATUS）。
@@ -118,6 +123,18 @@ export struct LaunchView {
    * 既是防重复请求的锁，也驱动 footer 那行文案，所以挂 @State 而不是普通成员。
    */
   @State loadingMore: boolean = false;
+
+  /**
+   * 视图模式：MODE_LIST（排期） / MODE_CALENDAR（日历）。
+   * 与 activeTab（待发射/已发射）正交 —— 日历只画待发射，
+   * 但分段控件要保留，否则从日历切回来时用户会丢失上下文。
+   */
+  @State viewMode: number = MODE_LIST;
+
+  /** 日历里点中的日期（空串 = 未选），仅用于高亮和「当日列表」标题 */
+  @State pickedDate: string = '';
+  /** 日历里点中那天对应的发射，点空白日期时清空 */
+  @State pickedLaunches: LaunchSummary[] = [];
 
   // ============ 私有成员（不参与渲染） ============
 
@@ -396,6 +413,39 @@ export struct LaunchView {
     return this.activeTab === TAB_UPCOMING ? this.upcoming : this.previous;
   }
 
+  /**
+   * 日历要用的全集：待发射 + 已发射。
+   *
+   * 两段各自维护自己的数组，日历必须合起来看，否则只能翻未来、翻不到历史。
+   * 已发射在上（历史），待发射在下 —— 拼接顺序不重要，日历内部按 net 的日期串分组。
+   * 同一 id 可能两边都有（发射后从 upcoming 挪到 previous 的过渡期），用 Set 去掉。
+   */
+  private calendarItems(): LaunchSummary[] {
+    const merged: LaunchSummary[] = [];
+    const seen: Set<string> = new Set<string>();
+    let i: number = 0;
+    while (i < this.previous.length) {
+      const item: LaunchSummary = this.previous[i];
+      const key: string = this.keyOf(item);
+      if (!seen.has(key)) {
+        seen.add(key);
+        merged.push(item);
+      }
+      i = i + 1;
+    }
+    let j: number = 0;
+    while (j < this.upcoming.length) {
+      const item: LaunchSummary = this.upcoming[j];
+      const key: string = this.keyOf(item);
+      if (!seen.has(key)) {
+        seen.add(key);
+        merged.push(item);
+      }
+      j = j + 1;
+    }
+    return merged;
+  }
+
   /** 这一条该不该跑秒级倒计时（见 LIVE_WINDOW_MS 的说明） */
   private isLive(item: LaunchSummary): boolean {
     const at: number = parseTime(strOf(item.net));
@@ -456,6 +506,62 @@ export struct LaunchView {
     .width('100%')
     .alignItems(HorizontalAlign.Start)
     .padding({ top: 12, bottom: 12 })
+  }
+
+  /**
+   * 双分段栏：左边「待发射/已发射」，右边「排期/日历」。
+   *
+   * 对位小程序 .mode-bar（一个 Row 里并排两组 seg）。两边都用同款胶囊分段，
+   * 左边撑满剩余宽度、右边按内容定宽 —— 微信里也是这个比例。
+   */
+  @Builder
+  modeBar() {
+    Row({ space: 8 }) {
+      Row() {
+        this.segOption('待发射', TAB_UPCOMING)
+        this.segOption('已发射', TAB_PREVIOUS)
+      }
+      .layoutWeight(1)
+      .padding(3)
+      .backgroundColor(CARD_BG)
+      .borderRadius(16)
+      .border({ width: 1, color: '#0DFFFFFF' })
+
+      Row() {
+        this.modeOption('排期', MODE_LIST)
+        this.modeOption('日历', MODE_CALENDAR)
+      }
+      .padding(3)
+      .backgroundColor(CARD_BG)
+      .borderRadius(16)
+      .border({ width: 1, color: '#0DFFFFFF' })
+    }
+    .width('100%')
+  }
+
+  /**
+   * 视图模式切换项。
+   *
+   * 切到日历要顺手把 upcoming/previous 都拉起来：日历横跨未来与历史，
+   * 只加载待发射的话，往前翻月份会一片空白（用户会以为是数据缺失）。
+   */
+  @Builder
+  modeOption(label: string, mode: number) {
+    Text(label)
+      .fontSize(12.5)
+      .fontWeight(this.viewMode === mode ? FontWeight.Medium : FontWeight.Normal)
+      .fontColor(this.viewMode === mode ? '#38BDF8' : '#6B7891')
+      .textAlign(TextAlign.Center)
+      .padding({ left: 12, right: 12, top: 7, bottom: 7 })
+      .borderRadius(13)
+      .backgroundColor(this.viewMode === mode ? '#2938BDF8' : '#00000000')
+      .onClick(() => {
+        this.viewMode = mode;
+        if (mode === MODE_CALENDAR) {
+          this.ensureUpcoming(false);
+          this.ensurePrevious(false);
+        }
+      })
   }
 
   /** 分段控件外壳：底 #141A26 + 圆角 16 + 极淡描边（对位 .feed-seg） */
@@ -548,6 +654,56 @@ export struct LaunchView {
     .clip(true)
   }
 
+  /**
+   * 日历模式下的「选中日标题」。
+   *
+   * dateStr 是 YYYY-MM-DD（LaunchCalendar 内部按本地时区拼的），这里只做显示格式化，
+   * 不重算日期 —— 两个地方各自算一次容易出现跨时区差一天的经典问题。
+   */
+  @Builder
+  pickedDayHeader() {
+    Row() {
+      Text(this.pickedDate)
+        .fontSize(13)
+        .fontWeight(FontWeight.Medium)
+        .fontColor('#FFFFFF')
+        .layoutWeight(1)
+
+      Text(this.pickedLaunches.length > 0 ? this.pickedLaunches.length + ' 次发射' : '无发射')
+        .fontSize(11)
+        .fontColor('#55617A')
+    }
+    .width('100%')
+    .alignItems(VerticalAlign.Center)
+    .padding({ top: 18, bottom: 4 })
+  }
+
+  /** 选中日确实没发射。理论上 onPick 只对有点的日子回调，这里是防御 */
+  @Builder
+  pickedDayEmpty() {
+    Column() {
+      Text('这一天没有发射任务')
+        .fontSize(12)
+        .fontColor('#55617A')
+    }
+    .width('100%')
+    .padding({ top: 20, bottom: 20 })
+    .alignItems(HorizontalAlign.Center)
+  }
+
+  /** 还没点任何日子时的引导文案（对位小程序「点有黄点的日期」那行小字） */
+  @Builder
+  pickedDayHint() {
+    Column() {
+      Text('点有黄点的日期，看当天的发射任务')
+        .fontSize(11)
+        .fontColor('#55617A')
+    }
+    .width('100%')
+    .padding({ top: 18, bottom: 24 })
+    .alignItems(HorizontalAlign.Center)
+  }
+
   /** 骨架列表：只在「列表为空 + 正在加载」时出现 */
   @Builder
   skeletonList() {
@@ -617,44 +773,88 @@ export struct LaunchView {
   build() {
     Column() {
       this.header()
-      this.segmented()
-      this.statRow()
+      this.modeBar()
 
-      if (this.currentList().length === 0) {
-        // 空列表：要么还在等首屏（骨架），要么真的没有（空态）
-        if (this.loading) {
-          this.skeletonList()
-        } else {
-          this.emptyState()
-        }
-      } else {
-        List({ scroller: this.scroller }) {
-          ForEach(this.currentList(), (item: LaunchSummary) => {
-            ListItem() {
-              LaunchCard({
-                item: item,
-                live: this.isLive(item),
-                onSelect: (picked: LaunchSummary) => {
-                  this.openLaunch(picked);
-                }
-              })
+      if (this.viewMode === MODE_CALENDAR) {
+        // 日历模式：月网格 + 选中日当天的列表。
+        // items 传「待发射 + 已发射」的并集 —— 日历要能往前翻看历史发射。
+        Scroll() {
+          Column() {
+            LaunchCalendar({
+              items: this.calendarItems(),
+              onPick: (dateStr: string, launches: LaunchSummary[]) => {
+                this.pickedDate = dateStr;
+                this.pickedLaunches = launches;
+              }
+            })
+
+            if (this.pickedDate.length > 0) {
+              this.pickedDayHeader()
+              if (this.pickedLaunches.length === 0) {
+                this.pickedDayEmpty()
+              } else {
+                ForEach(this.pickedLaunches, (item: LaunchSummary) => {
+                  LaunchCard({
+                    item: item,
+                    live: this.isLive(item),
+                    onSelect: (picked: LaunchSummary) => {
+                      this.openLaunch(picked);
+                    }
+                  })
+                  .margin({ top: 10 })
+                }, (item: LaunchSummary) => 'cal_' + this.keyOf(item))
+              }
+            } else {
+              this.pickedDayHint()
             }
-            .padding({ bottom: 10 })
-          }, (item: LaunchSummary) => this.keyOf(item))
-
-          ListItem() {
-            this.footer()
           }
+          .width('100%')
+          .alignItems(HorizontalAlign.Start)
         }
         .width('100%')
         .layoutWeight(1)
         .scrollBar(BarState.Off)
         .edgeEffect(EdgeEffect.Spring)
-        .cachedCount(3)
-        // 触底加载：List 自带 onReachEnd，比手算 offset 稳（见 loadMore 的三道闸）
-        .onReachEnd(() => {
-          this.loadMore();
-        })
+        .align(Alignment.Top)
+      } else {
+        this.statRow()
+
+        if (this.currentList().length === 0) {
+          // 空列表：要么还在等首屏（骨架），要么真的没有（空态）
+          if (this.loading) {
+            this.skeletonList()
+          } else {
+            this.emptyState()
+          }
+        } else {
+          List({ scroller: this.scroller }) {
+            ForEach(this.currentList(), (item: LaunchSummary) => {
+              ListItem() {
+                LaunchCard({
+                  item: item,
+                  live: this.isLive(item),
+                  onSelect: (picked: LaunchSummary) => {
+                    this.openLaunch(picked);
+                  }
+                })
+              }
+              .padding({ bottom: 10 })
+            }, (item: LaunchSummary) => this.keyOf(item))
+
+            ListItem() {
+              this.footer()
+            }
+          }
+          .width('100%')
+          .layoutWeight(1)
+          .scrollBar(BarState.Off)
+          .edgeEffect(EdgeEffect.Spring)
+          .cachedCount(3)
+          // 触底加载：List 自带 onReachEnd，比手算 offset 稳（见 loadMore 的三道闸）
+          .onReachEnd(() => {
+            this.loadMore();
+          })
+        }
       }
     }
     .width('100%')
