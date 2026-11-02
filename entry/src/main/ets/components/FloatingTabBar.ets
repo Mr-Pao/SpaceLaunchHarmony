@@ -4,22 +4,14 @@
  * 对位小程序 custom-tab-bar/index.wxss（原生 wxml/wxss，不是 .vue）。
  * 视觉目标：胶囊**浮在页面之上**，露一圈页面底色，而不是贴底的一条栏。
  *
- * ⚠ 需要补齐的 5 个图标（同事正在配）。放到
- *   entry/src/main/resources/base/media/
- *     ic_today.png    ic_launch.png   ic_gallery.png
- *     ic_rocket.png   ic_mine.png
- *   建议尺寸 96×96（@3x，即 32vp 显示）；若要多倍图，用
- *   media/ic_today.png + media/ic_today@2x.png 这种目录约定。
+ * 图标：五对双态 PNG，直接复制自小程序仓库 `static/image/tabbar/`
+ * （today1/today2、huojian1/huojian2、tuku1/tuku2、rocket1/rocket2、guanyu1/guanyu2），
+ * 一律 81×81，落 `resources/base/media/ic_*.png` 与 `ic_*_on.png`。
+ * 不用重画：小程序那套已经是「未选中灰 / 选中蓝」双态，与胶囊配色天然一致。
  *
- * 第一阶段**故意不用 Image**：资源没到位时 Image($r('app.media.ic_today'))
- * 会让编译直接失败（找不到资源 id），五人并行开发阶段会挡住所有人。
- * 所以这里用「几何图形 + 文字」的临时方案：
- *   选中   → 实心圆点（强调色）+ 细描边外环 + 文字强调色加粗
- *   未选中 → 空心圆环（次要色）+ 文字次要色
- * 图标补齐后，把 iconOf() 里的 Circle 换成
- *   Image(this.currentIndex === i ? $r('app.media.ic_today_on') : $r('app.media.ic_today'))
- *   .width(22).height(22).objectFit(ImageFit.Contain)
- * 即可，其余布局不用动。
+ * 早期用「空心圆环 + 实心点」几何占位，是因为资源未到位时
+ * `Image($r('app.media.ic_today'))` 找不到资源 id 会让编译直接失败，
+ * 五人并行开发阶段那会挡住所有人。资源到位后已全部换掉。
  *
  * 底部安全区：现在固定 margin bottom 20。有手势条的机型（以及横屏、
  * 折叠屏展开）需要动态读避让区：
@@ -32,7 +24,7 @@
 /** 一个 tab 的静态描述。用普通 class 而不是对象字面量：ArkTS 不允许无类型的对象字面量 */
 class TabItem {
   label: string = '';
-  /** 图标资源名，仅用于日志/将来替换，第一阶段不参与渲染 */
+  /** 资源名，仅用于 ForEach 的 key（必须稳定且唯一） */
   icon: string = '';
 
   constructor(label: string, icon: string) {
@@ -57,37 +49,36 @@ export struct FloatingTabBar {
     new TabItem('我的', 'ic_mine')
   ];
 
-  /** 未选中：空心圆环（代替图标） */
-  @Builder
-  idleDot() {
-    Circle({ width: 18, height: 18 })
-      .fill(Color.Transparent)
-      .stroke('#7C8AA5')
-      .strokeWidth(1.5)
-  }
-
-  /** 选中：细描边外环（代替图标），与下面的实心点叠成「靶心」 */
-  @Builder
-  activeRing() {
-    Circle({ width: 18, height: 18 })
-      .fill(Color.Transparent)
-      .stroke('#38BDF8')
-      .strokeWidth(1.5)
+  /**
+   * 按索引取双态图标的资源。
+   *
+   * 为什么不用 `$r('app.media.' + name)` 拼字符串：`$r` 的参数必须是编译期字面量，
+   * 拼出来的资源名不会被资源编译器识别（运行时拿到的是 undefined）。
+   * 所以这里只能每个图标写一条分支 —— ArkTS 的 switch 正好适合。
+   */
+  private iconOf(index: number, active: boolean): Resource {
+    if (index === 0) {
+      return active ? $r('app.media.ic_today_on') : $r('app.media.ic_today');
+    } else if (index === 1) {
+      return active ? $r('app.media.ic_launch_on') : $r('app.media.ic_launch');
+    } else if (index === 2) {
+      return active ? $r('app.media.ic_gallery_on') : $r('app.media.ic_gallery');
+    } else if (index === 3) {
+      return active ? $r('app.media.ic_rocket_on') : $r('app.media.ic_rocket');
+    }
+    return active ? $r('app.media.ic_mine_on') : $r('app.media.ic_mine');
   }
 
   @Builder
   tabCell(index: number, label: string) {
     Column() {
-      Stack() {
-        if (this.currentIndex === index) {
-          this.activeRing()
-          Circle({ width: 7, height: 7 }).fill('#38BDF8')
-        } else {
-          this.idleDot()
-        }
-      }
-      .width(22)
-      .height(22)
+      // 22vp：对位小程序 .ctb-icon 的 44rpx（= 22vp）。
+      // 原图 81×81 是 @3x 规格，直接 objectFit(Contain) 缩放即可，不必换多倍图。
+      Image(this.iconOf(index, this.currentIndex === index))
+        .width(22)
+        .height(22)
+        .objectFit(ImageFit.Contain)
+        .draggable(false)
 
       Text(label)
         .fontSize(10)
