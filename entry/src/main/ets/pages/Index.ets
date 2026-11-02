@@ -1,12 +1,19 @@
 /**
- * pages/Index.ets —— 唯一宿主页
+ * pages/Index.ets —— 唯一宿主页（A1 路由架构）
  *
  * 全应用只有一个 @Entry（ArkTS 硬约束：路由栈里每个页面文件各自一个 @Entry，
  * 但本工程所有 tab 都是同一个页面的子视图，所以只有这一个）。
  *
  * 结构：Stack（底部对齐）
  *   ├─ Tabs（隐藏原生 bar，纯做容器 + 生命周期管理）
+ *   │    └─ 每个 TabContent 内嵌一个独立 Navigation（各自的 NavPathStack）
  *   └─ FloatingTabBar（悬浮胶囊，浮在 Tabs 之上）
+ *
+ * 为什么每个 tab 一个独立 NavPathStack（A1 方案）：
+ *   小程序 tabBar 的语义是「切 tab 关闭非 tab 页面的栈」。每个 tab 一个栈，
+ *   切走时该栈保留（回来还在原详情页），切到别的 tab 时那个 tab 是它自己的栈，
+ *   天然复刻了这个行为。如果全应用共用一个栈，切 tab 后还停在上个 tab 的详情页，
+ *   与预期不符。
  *
  * 为什么用 Tabs 而不是自己 switch 组件：
  *   1. Tabs 自带 keepAlive —— 切走的 tab 不会被销毁，回来时列表滚动位置、
@@ -17,6 +24,7 @@
  * ⚠ ArkTS 硬约束：**TabContent 必须是 Tabs 的直接子组件**，
  *   中间不能包 Column / Row / Stack / If / ForEach 任何东西，
  *   否则编译报 "The component 'TabContent' can only be used as a child of 'Tabs'"。
+ *   Navigation 包在 TabContent **里面**，不是外面，所以不违反这条。
  */
 
 import { TodayView } from '../view/TodayView';
@@ -25,6 +33,9 @@ import { GalleryView } from '../view/GalleryView';
 import { RocketView } from '../view/RocketView';
 import { MineView } from '../view/MineView';
 import { FloatingTabBar } from '../components/FloatingTabBar';
+import { Nav, ROUTE_LAUNCH, ROUTE_PHOTO, ROUTE_ROCKET } from '../routes/Nav';
+import { LaunchDetailPage, PhotoDetailPage, RocketDetailPage } from '../routes/DetailPages';
+import { LaunchNavParam, PhotoNavParam, RocketNavParam } from '../routes/NavParam';
 
 @Entry
 @Component
@@ -32,28 +43,126 @@ struct Index {
   private tabsController: TabsController = new TabsController();
   @State currentIndex: number = 0;
 
+  /**
+   * 五个 tab 各自的路由栈。
+   *
+   * 用五个独立成员而不是 `@State stacks: NavPathStack[]`：
+   *   1. ArkTS 的 @State 对「对象数组的元素替换」不观察，但这里本来就不需要观察
+   *      （栈变化由 Navigation 内部驱动重渲染）；
+   *   2. 五个具名成员可读性远好于下标访问，且能直接当 Navigation(this.xxx) 的入参。
+   *
+   * 不用 @State 修饰：NavPathStack 是引用类型，其内部状态由 Navigation 组件自己
+   * 跟踪，外加 @State 只会带来无意义的比较开销。
+   */
+  private stackToday: NavPathStack = new NavPathStack();
+  private stackLaunch: NavPathStack = new NavPathStack();
+  private stackGallery: NavPathStack = new NavPathStack();
+  private stackRocket: NavPathStack = new NavPathStack();
+  private stackMine: NavPathStack = new NavPathStack();
+
+  aboutToAppear(): void {
+    // 首帧就把「今日」栈交给全局门面，否则第一次点击详情时 Nav.current 还是 null
+    Nav.current = this.stackToday;
+  }
+
+  /** 按索引取栈，供 onChange 同步 Nav.current */
+  private stackAt(index: number): NavPathStack {
+    if (index === 0) {
+      return this.stackToday;
+    }
+    if (index === 1) {
+      return this.stackLaunch;
+    }
+    if (index === 2) {
+      return this.stackGallery;
+    }
+    if (index === 3) {
+      return this.stackRocket;
+    }
+    return this.stackMine;
+  }
+
+  /**
+   * 路由分发表：NavPathStack 按 name 找对应页面。
+   *
+   * param 的类型是 object（NavPathStack 的签名如此），进到各页面前断言成具体 class。
+   * 为什么第一阶段就用这张表而不是 route_map.json：
+   *   route_map 是编译期生成的静态表，需要额外的 profile 配置与命名规范；
+   *   手写 switch 更直观、改起来不用管配置，详情页定型后再考虑迁移。
+   */
+  @Builder
+  PageMap(name: string, param: object) {
+    if (name === ROUTE_LAUNCH) {
+      LaunchDetailPage(name, param as LaunchNavParam)
+    } else if (name === ROUTE_PHOTO) {
+      PhotoDetailPage(name, param as PhotoNavParam)
+    } else if (name === ROUTE_ROCKET) {
+      RocketDetailPage(name, param as RocketNavParam)
+    }
+  }
+
   build() {
     Stack({ alignContent: Alignment.Bottom }) {
       Tabs({ barPosition: BarPosition.End, controller: this.tabsController }) {
         // —— 以下五个 TabContent 必须与下方 FloatingTabBar 的 items 顺序一致 ——
         TabContent() {
-          TodayView()
+          Navigation(this.stackToday) {
+            TodayView()
+          }
+          .hideTitleBar(true)
+          .hideToolBar(true)
+          .mode(NavigationMode.Stack)
+          .navDestination(this.PageMap)
+          .width('100%')
+          .height('100%')
         }
 
         TabContent() {
-          LaunchView()
+          Navigation(this.stackLaunch) {
+            LaunchView()
+          }
+          .hideTitleBar(true)
+          .hideToolBar(true)
+          .mode(NavigationMode.Stack)
+          .navDestination(this.PageMap)
+          .width('100%')
+          .height('100%')
         }
 
         TabContent() {
-          GalleryView()
+          Navigation(this.stackGallery) {
+            GalleryView()
+          }
+          .hideTitleBar(true)
+          .hideToolBar(true)
+          .mode(NavigationMode.Stack)
+          .navDestination(this.PageMap)
+          .width('100%')
+          .height('100%')
         }
 
         TabContent() {
-          RocketView()
+          Navigation(this.stackRocket) {
+            RocketView()
+          }
+          .hideTitleBar(true)
+          .hideToolBar(true)
+          .mode(NavigationMode.Stack)
+          .navDestination(this.PageMap)
+          .width('100%')
+          .height('100%')
         }
 
         TabContent() {
-          MineView()
+          Navigation(this.stackMine) {
+            MineView()
+          }
+          .hideTitleBar(true)
+          .hideToolBar(true)
+          .mode(NavigationMode.Stack)
+          .navDestination(this.PageMap)
+          .width('100%')
+          .height('100%')
         }
       }
       // barHeight(0)：不渲染原生 tabBar，底部导航完全由 FloatingTabBar 接管。
@@ -66,9 +175,10 @@ struct Index {
       .animationDuration(0)
       .divider({ strokeWidth: 0, color: Color.Transparent })
       .onChange((index: number) => {
-        // 双保险：FloatingTabBar 点击时已同步过一次，这里接住
-        // controller 被外部（如将来 deep link）改变的情况
+        // 切 tab 时把该 tab 的栈设为活跃栈。
+        // 两个来源都会走到这里：胶囊点击（主动 changeIndex）与 Tabs 自身变化。
         this.currentIndex = index;
+        Nav.current = this.stackAt(index);
       })
       .width('100%')
       .height('100%')
@@ -77,6 +187,7 @@ struct Index {
         currentIndex: this.currentIndex,
         onSelect: (index: number) => {
           this.currentIndex = index;
+          Nav.current = this.stackAt(index);
           this.tabsController.changeIndex(index);
         }
       })

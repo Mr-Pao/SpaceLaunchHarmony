@@ -54,6 +54,8 @@ import { LaunchSummary, UpcomingPayload, OnThisDayItem, OnThisDayPayload } from 
 import { AstronautCard, AstronautsInspacePayload } from '../model/Astronaut';
 import { ApodItem, EpicItem, ApodPayload, EpicPayload } from '../model/Apod';
 import { NewsItem, NewsPayload } from '../model/News';
+import { Nav } from '../routes/Nav';
+import { LaunchNavParam, PhotoNavParam } from '../routes/NavParam';
 
 const DOMAIN: number = 0x0000;
 const TAG: string = 'TodayView';
@@ -520,45 +522,100 @@ export struct TodayView {
     return best === null ? EMPTY_LAUNCH : best;
   }
 
-  // ============ 交互（无路由，见文件头「取舍 3」） ============
+  // ============ 交互（A1 路由：直接调全局 Nav 门面） ============
 
   private logAction(action: string, key: string): void {
     hilog.debug(DOMAIN, TAG, '%{public}s key=%{public}s', action, key);
   }
 
+  /**
+   * 每日卡点击：
+   *   sl 卡（每日一图）→ 发射详情页，带 launchId + net
+   *   apod / epic    → 图片详情页（src 非空才有图可看）
+   */
   private openDailyCard(item: DailyCardItem): void {
-    // TODO(路由): sl 卡 → 发射详情页（launchId + net）；apod/epic 卡 → 图片详情页
-    this.logAction('打开每日卡 type=' + item.type, item.launchId.length > 0 ? item.launchId : item.title);
+    if (item.type === 'sl' && item.launchId.length > 0) {
+      Nav.pushLaunch(new LaunchNavParam(item.launchId, item.net, item.title));
+      return;
+    }
+    if (item.src.length > 0) {
+      Nav.pushPhoto(new PhotoNavParam(item.src, item.title));
+      return;
+    }
+    this.logAction('每日卡无可跳目标 type=' + item.type, item.title);
   }
 
+  /**
+   * 「更多图片」：同样进看图器。
+   *
+   * 小程序这里进的是图库对应分类（apod → nasa tab，epic → earth tab）；
+   * 鸿蒙侧图库页还没做，先统一落到看图器，等 GalleryView 成型再改成切 tab。
+   */
   private openDailyMore(item: DailyCardItem): void {
-    // TODO(路由): 进入图库对应分类（apod → nasa tab，epic → earth tab，sl → 该发射的图集）
-    this.logAction('每日卡更多图片 type=' + item.type, item.title);
+    if (item.src.length > 0) {
+      Nav.pushPhoto(new PhotoNavParam(item.src, item.title));
+      return;
+    }
+    this.logAction('每日卡更多图片无图 type=' + item.type, item.title);
   }
 
   private openLaunch(item: LaunchSummary): void {
-    // TODO(路由): 跳发射详情页，入参 id + net
-    this.logAction('打开下次发射', strOf(item.id));
+    const id: string = strOf(item.id);
+    if (id.length === 0) {
+      this.logAction('下次发射缺 id，无法跳详情', strOf(item.net));
+      return;
+    }
+    const title: string = this.launchTitleOf(item);
+    Nav.pushLaunch(new LaunchNavParam(id, strOf(item.net), title));
   }
 
+  /** 任务名口径与小程序一致：mission.nameZh || mission.name，兜底 item.name */
+  private launchTitleOf(item: LaunchSummary): string {
+    const mission = item.mission;
+    if (mission !== undefined && mission !== null) {
+      const zh: string = strOf(mission.nameZh);
+      if (zh.length > 0) {
+        return zh;
+      }
+      const en: string = strOf(mission.name);
+      if (en.length > 0) {
+        return en;
+      }
+    }
+    return strOf(item.name);
+  }
+
+  /**
+   * 「更多发射」：本应切到「发射」tab。
+   *
+   * 切 tab 是宿主 Index 的能力，子视图拿不到 TabsController；
+   * 第一阶段先不接（保留日志），等 Index 暴露 onSwitchTab 回调再接上。
+   */
   private openLaunchList(): void {
-    // TODO(路由): 切到「发射」tab（需要宿主 Index 提供 onSwitchTab 回调）
-    this.logAction('打开发射列表', '');
+    this.logAction('打开发射列表（待宿主提供 onSwitchTab）', '');
   }
 
   private openHistory(item: OnThisDayItem): void {
-    // TODO(路由): 跳发射详情页，入参 id + net
-    this.logAction('打开往年今日', strOf(item.id));
+    const id: string = strOf(item.id);
+    if (id.length === 0) {
+      this.logAction('往年今日缺 id，无法跳详情', strOf(item.name));
+      return;
+    }
+    const zh: string = strOf(item.nameZh);
+    const title: string = zh.length > 0 ? zh : strOf(item.name);
+    Nav.pushLaunch(new LaunchNavParam(id, strOf(item.net), title));
   }
 
+  /**
+   * 资讯：小程序侧因未配业务域名，web-view 打不开、只能「复制链接」。
+   * 鸿蒙侧同理没有内置浏览器，先只记日志，等做资讯详情页再接。
+   */
   private openNews(item: NewsItem): void {
-    // TODO(路由): 资讯详情页。小程序只能「复制链接」（未配业务域名），鸿蒙侧同理
-    this.logAction('打开资讯', strOf(item.title));
+    this.logAction('打开资讯（待做资讯详情页）', strOf(item.title));
   }
 
   private openNewsList(): void {
-    // TODO(路由): 全部资讯页
-    this.logAction('打开发射资讯列表', '');
+    this.logAction('打开发射资讯列表（待做）', '');
   }
 
   // ============ UI ============
