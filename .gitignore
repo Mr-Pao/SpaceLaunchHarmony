@@ -10,6 +10,9 @@ local.properties
 .clang-format
 .clang-tidy
 
+# DevEco 预览器临时产物（构建输出，不入库）
+.preview/
+
 # 系统与编辑器
 .DS_Store
 Thumbs.db
