@@ -1,0 +1,44 @@
+{
+  "forms": [
+    {
+      "name": "next_launch",
+      "displayName": "$string:card_next_launch",
+      "description": "$string:card_next_launch_desc",
+      "src": "./ets/widget/pages/NextLaunchCard.ets",
+      "uiSyntax": "arkts",
+      "window": {
+        "designWidth": 720,
+        "autoDesignWidth": true
+      },
+      "colorMode": "auto",
+      "isDynamic": true,
+      "isDefault": true,
+      "updateEnabled": true,
+      "updateDuration": 1,
+      "defaultDimension": "2*2",
+      "supportDimensions": [
+        "2*2"
+      ]
+    },
+    {
+      "name": "today_image",
+      "displayName": "$string:card_today_image",
+      "description": "$string:card_today_image_desc",
+      "src": "./ets/widget/pages/TodayImageCard.ets",
+      "uiSyntax": "arkts",
+      "window": {
+        "designWidth": 720,
+        "autoDesignWidth": true
+      },
+      "colorMode": "auto",
+      "isDynamic": true,
+      "isDefault": false,
+      "updateEnabled": true,
+      "updateDuration": 2,
+      "defaultDimension": "2*4",
+      "supportDimensions": [
+        "2*4"
+      ]
+    }
+  ]
+}

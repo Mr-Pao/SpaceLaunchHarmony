@@ -33,13 +33,30 @@
         ]
       }
     ],
+    // 卡片（Form Kit）：两张服务卡片 next_launch / today_image，声明见 resources/base/profile/form_config.json
+    "extensionAbilities": [
+      {
+        "name": "EntryFormAbility",
+        "srcEntry": "./ets/entryformability/EntryFormAbility.ets",
+        "label": "$string:EntryFormAbility_label",
+        "description": "$string:EntryFormAbility_desc",
+        "type": "form",
+        "metadata": [
+          {
+            "name": "ohos.extension.form",
+            "resource": "$profile:form_config"
+          }
+        ]
+      }
+    ],
     "requestPermissions": [
       {
         "name": "ohos.permission.INTERNET",
         "reason": "$string:internet_reason",
         "usedScene": {
           "abilities": [
-            "EntryAbility"
+            "EntryAbility",
+            "EntryFormAbility"
           ],
           "when": "inuse"
         }

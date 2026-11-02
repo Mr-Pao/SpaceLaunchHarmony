@@ -35,6 +35,30 @@
     {
       "name": "tab_mine",
       "value": "我的"
+    },
+    {
+      "name": "EntryFormAbility_label",
+      "value": "航天发射卡片"
+    },
+    {
+      "name": "EntryFormAbility_desc",
+      "value": "在桌面上显示下次发射倒计时与今日天文图"
+    },
+    {
+      "name": "card_next_launch",
+      "value": "下次发射"
+    },
+    {
+      "name": "card_next_launch_desc",
+      "value": "距离下一次发射还有多久"
+    },
+    {
+      "name": "card_today_image",
+      "value": "今日一图"
+    },
+    {
+      "name": "card_today_image_desc",
+      "value": "NASA 每日天文图"
     }
   ]
 }

@@ -30,7 +30,14 @@ export class FileStore {
    * 目录是 v{DATA_VERSION} 的，版本升级时自然是另一个目录，
    * 旧目录由 clearAllSync() 或系统清理流程收走。
    */
-  init(ctx: common.UIAbilityContext, dataVersion?: number): void {
+  /**
+   * 形参类型放宽到 common.Context 而不是 UIAbilityContext：
+   * 卡片的 FormExtensionAbility 拿到的是 FormExtensionContext，它只有
+   * filesDir 这类基类能力、没有 windowStage / startAbility，
+   * 用 UIAbilityContext 接会直接编译报「Type ... is missing the following
+   * properties」。这里只用 filesDir，用基类类型即可，调用方仍是 EntryAbility。
+   */
+  init(ctx: common.Context, dataVersion?: number): void {
     const v: number = dataVersion !== undefined && dataVersion > 0 ? dataVersion : 0;
     const versionDir: string = v > 0 ? 'v' + v : 'v0';
     this.dir = ctx.filesDir + '/' + CACHE_DIR_NAME + '/' + versionDir;
