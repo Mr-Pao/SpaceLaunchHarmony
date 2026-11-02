@@ -87,11 +87,15 @@ export struct FloatingTabBar {
         .fontWeight(this.currentIndex === index ? FontWeight.Bold : FontWeight.Normal)
         .fontColor(this.currentIndex === index ? '#38BDF8' : '#7C8AA5')
     }
-    // 单元格占满剩余宽度，内部居中；高度 = 胶囊 58 - 上下留白 8*2 = 42
+    // 单元格占满剩余宽度，内部居中。
+    // 高度 48vp / 圆角 22vp / 左右 5vp —— 逐条对位小程序 .ctb-tab：
+    //   height: calc(100% - 16rpx) → (112-16)/2 = 48vp
+    //   margin: 8rpx 10rpx        → 4vp / 5vp
+    //   border-radius: 44rpx      → 22vp
     .layoutWeight(1)
-    .height(42)
-    .margin({ left: 4, right: 4 })
-    .borderRadius(21)
+    .height(48)
+    .margin({ left: 5, right: 5 })
+    .borderRadius(22)
     // 选中态淡蓝底，对位 wxss 的 .ctb-on { background: rgba(56,189,248,0.16) }
     .backgroundColor(this.currentIndex === index ? '#2938BDF8' : Color.Transparent)
     .justifyContent(FlexAlign.Center)
@@ -115,23 +119,26 @@ export struct FloatingTabBar {
         }, (item: TabItem, index: number) => item.icon + '_' + index)
       }
       .width('88%')
-      .height(58)
+      // 56vp / 28vp —— 对位小程序 .ctb-bar 的 height 112rpx、radius 56rpx
+      .height(56)
       .padding({ left: 6, right: 6 })
-      .borderRadius(29)
-      // 深色近实底 + 背景模糊：内容从胶囊底下滚过时只剩极淡的糊化色块。
-      // 原先是 rgba(30,40,60,0.62)，实测胶囊边缘会透出底下图片的彩色色带
-      // （2026-11-02 截图：胶囊下半截泛蓝），所以把不透明度提到 0.95。
-      .backgroundColor('#F21E283C') // rgba(30,40,60,0.95)
-      .backdropBlur(24)
-      // 1px 半透明白边：让胶囊在深色页面上有「玻璃边缘」的高光。
-      // 注意原 wxss **没有** border，这是本次有意加的（用户 prompt 指定），
-      // 对照表里已注明差异
-      .border({ width: 1, color: '#1AFFFFFF' })
+      .borderRadius(28)
+      // 半透明毛玻璃：rgba(30,40,60,0.62) + blur(20rpx→10vp)。
+      //
+      // 这里曾一度把不透明度提到 0.95 来盖住底部那条模糊彩带，但真正的病根
+      // 是外层渐变遮罩末端没收到实色（已在本文件末尾修掉），不是胶囊太透。
+      // 病根修掉后按小程序的 0.62 还原：胶囊透一点、能看见底下星空，
+      // 这正是小程序「浮在页面上」的观感；0.95 会把胶囊变成一块实心板。
+      .backgroundColor('#9E1E283C')
+      .backdropBlur(10)
+      // 小程序 .ctb-bar **没有** border，之前的 1vp 描边是我们加的，去掉
       .shadow({ radius: 20, color: '#80000000', offsetX: 0, offsetY: 6 })
     }
     .width('100%')
-    // 顶部 28 给渐变留出渐入高度，底部 20 保持胶囊与屏幕底边的「浮起」距离
-    .padding({ top: 28, bottom: 20 })
+    // 小程序 .ctb-wrap 是 padding: 8rpx 24rpx + padding-bottom 12rpx（= 4 / 12 / 6vp）。
+    // 我们多留一点：顶部 20 给渐变遮罩渐入（这是小程序没有的那一层，见下），
+    // 底部 12 让胶囊离屏底有一点浮起的呼吸感。
+    .padding({ top: 20, bottom: 12 })
     // 渐变遮罩必须收到完全不透明：胶囊本身的 backdropBlur 会把底下内容糊化后透上来，
     // 只要遮罩末端还有一丝透明度（原先是 #F2 = 95%），底部就能看到一条模糊彩带。
     // 实测 2026-11-02：改成 #FF（100%）后底部彻底干净，胶囊的「浮起」感靠阴影维持。
