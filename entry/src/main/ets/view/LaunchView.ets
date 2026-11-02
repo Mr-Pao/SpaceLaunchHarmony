@@ -130,9 +130,15 @@ const OPT_LIMIT_AGENCY: number = 24;
 const OPT_LIMIT_ROCKET: number = 24;
 
 /** 悬浮圆钮直径 / 右边距 / 底部让位（胶囊 58 + margin 20 + 自身间隙） */
-const FAB_SIZE: number = 48;
-const FAB_RIGHT: number = 16;
-const FAB_BOTTOM: number = 92 + 12;
+/**
+ * 右下角两枚悬浮圆钮的尺寸与位置，逐条对位小程序 .fab：
+ *   宽高 68rpx → 34vp；right 30rpx → 15vp；bottom 166rpx → 83vp
+ *   统计球叠在筛选球正上方，间距 24rpx → 12vp（68+24=92，166+92=258rpx）
+ * 我原先写的 48vp / bottom 104 是凭空放的，比小程序大一圈、还贴着胶囊。
+ */
+const FAB_SIZE: number = 34;
+const FAB_RIGHT: number = 15;
+const FAB_BOTTOM: number = 83;
 const FAB_GAP: number = 12;
 /** 面板与按钮的强调色（任务书视觉规范） */
 const ACCENT: string = '#38BDF8';
@@ -204,6 +210,24 @@ export struct LaunchView {
 
   /** upcomingMore 是否已经没得加载了（加载过一次 / 回来是空） */
   @State moreDone: boolean = false;
+
+  /**
+   * 首屏加载失败文案（空串 = 没失败）。
+   *
+   * 只有「列表本来是空的且拉数据 reject」才置：有缓存时 repo 不会 reject，
+   * 后台刷新失败也不该把已有内容换成错误页 —— 那等于拿一次网络抖动惩罚用户。
+   * 对位小程序 pages/index/index.vue:41 的 `error && list.length === 0`。
+   */
+  @State loadError: string = '';
+
+  /**
+   * 下拉刷新状态。
+   *
+   * 对位小程序 pages/index/index.vue 的 enablePullDownRefresh + onPullDownRefresh：
+   * 重拉当前分段（force）。**必须只是「当前分段」**——把两段一起重拉会让
+   * 另一个 tab 的列表在后台替换，切过去时闪一下，得不偿失。
+   */
+  @State refreshing: boolean = false;
 
   /**
    * 触底加载锁。
@@ -294,11 +318,15 @@ export struct LaunchView {
     repo.load<UpcomingPayload>('upcoming', opts)
       .then((data: UpcomingPayload) => {
         this.applyUpcoming(data);
+        this.loadError = '';
       })
       .catch((e: BusinessError) => {
-        // 有缓存时 repo 不会 reject；走到这里说明首次冷启动且断网，
-        // 列表保持空 → build 里自然落到空态，不会白屏
+        // 有缓存时 repo 不会 reject；走到这里说明首次冷启动且断网。
+        // 只有真的一条都没拿到才置错误态，否则保留已有列表（一次抖动不该清屏）
         hilog.warn(DOMAIN, TAG, 'upcoming 加载失败: %{public}s', e.message);
+        if (this.upcoming.length === 0) {
+          this.loadError = '网络不太顺，请稍后重试';
+        }
       })
       .then(() => {
         this.loadingUpcoming = false;
@@ -1005,7 +1033,13 @@ export struct LaunchView {
   }
 
   /**
-   * 视图模式切换项。
+   * 视图模式切换项（排期 / 日历）。
+   *
+   * **选中态是中性灰白，不是天蓝** —— 对位小程序 .mode-opt.on：
+   *   background: rgba(255,255,255,0.08); color: #cbd5e0;
+   * 左边那组「待发射/已发射」才是天蓝（.feed-opt.on 用 #38bdf8）。
+   * 两组控件刻意不同色：天蓝表示「在看哪一批数据」，灰白只是视图切换，
+   * 两边都染天蓝会让「当前在哪一档」这个最要紧的信息被稀释。
    *
    * 切到日历要顺手把 upcoming/previous 都拉起来：日历横跨未来与历史，
    * 只加载待发射的话，往前翻月份会一片空白（用户会以为是数据缺失）。
@@ -1015,11 +1049,11 @@ export struct LaunchView {
     Text(label)
       .fontSize(12.5)
       .fontWeight(this.viewMode === mode ? FontWeight.Medium : FontWeight.Normal)
-      .fontColor(this.viewMode === mode ? '#38BDF8' : '#6B7891')
+      .fontColor(this.viewMode === mode ? '#CBD5E0' : '#6B7891')
       .textAlign(TextAlign.Center)
       .padding({ left: 12, right: 12, top: 7, bottom: 7 })
       .borderRadius(13)
-      .backgroundColor(this.viewMode === mode ? '#2938BDF8' : '#00000000')
+      .backgroundColor(this.viewMode === mode ? '#14FFFFFF' : '#00000000')
       .onClick(() => {
         this.viewMode = mode;
         if (mode === MODE_CALENDAR) {
@@ -1065,6 +1099,76 @@ export struct LaunchView {
   }
 
   /** 统计行：主轴两端对齐，数字在左、更新状态在右（对位 .stat） */
+  /**
+   * 已生效筛选的概览条：一行摘要 + 一个 ×。
+   *
+   * 对位小程序 .on-filter（pages/index/index.vue:104-111）。
+   * 为什么要这条：筛选藏在右下角抽屉里，收起后界面上看不出「现在看到的是筛过的」，
+   * 用户会以为数据丢了。这条条子既是说明也是唯一的清空入口。
+   */
+  @Builder
+  onFilterBar() {
+    Row() {
+      Text(this.filterSummary())
+        .fontSize(12)
+        .fontColor('#7FB6DC')
+        .maxLines(2)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .layoutWeight(1)
+
+      // × 用两个 45° 细条拼，不用 Text('✕')：文字叉的字重和基线在不同字体下会偏，
+      // 而这两个条的位置是硬编码的相对坐标，哪台机器都一样
+      Stack() {
+        Row()
+          .width(10)
+          .height(1)
+          .backgroundColor('#7FB6DC')
+          .rotate({ angle: 45 })
+        Row()
+          .width(10)
+          .height(1)
+          .backgroundColor('#7FB6DC')
+          .rotate({ angle: -45 })
+      }
+      .width(22)
+      .height(22)
+      .borderRadius(11)
+      .onClick(() => {
+        this.resetFilter();
+      })
+    }
+    .width('100%')
+    .alignItems(VerticalAlign.Center)
+    .padding({ left: 10, right: 7, top: 6, bottom: 6 })
+    .margin({ bottom: 7 })
+    .borderRadius(8)
+    .backgroundColor('#1438BDF8')
+    .border({ width: 1, color: '#3838BDF8' })
+  }
+
+  /**
+   * 概览条文案：`「关键词」 · 国家 · 机构 · 火箭`。
+   *
+   * 三个维度的 value 都是中文显示名（见 dimValueOf 的注释），直接拼即可，
+   * 不用再走 dimLabelOf 反查 —— 反查要拿一条样本数据，筛空了样本就没了。
+   */
+  private filterSummary(): string {
+    const parts: string[] = [];
+    if (this.keyword.length > 0) {
+      parts.push('「' + this.keyword + '」');
+    }
+    if (this.filtCountry.length > 0) {
+      parts.push(this.filtCountry);
+    }
+    if (this.filtAgency.length > 0) {
+      parts.push(this.filtAgency);
+    }
+    if (this.filtRocket.length > 0) {
+      parts.push(this.filtRocket);
+    }
+    return parts.join(' · ');
+  }
+
   @Builder
   statRow() {
     Row() {
@@ -1195,6 +1299,67 @@ export struct LaunchView {
   }
 
   /** 空态：图标 + 一句话 + 提示。断网冷启动 / 过滤后为空都会落到这里 */
+  /**
+   * 首屏错误态：⚠️ + 错误文案 + 「重新尝试」。
+   *
+   * 对位小程序 .error（pages/index/index.vue:41-45）。之前我把失败也落到空态里，
+   * 文案是「下拉或稍后重试」—— 但空态没有可点的东西，用户只能干等；
+   * 错误态必须给一个按钮，否则他没法自救。
+   */
+  @Builder
+  errorState() {
+    Column() {
+      Text('⚠️')
+        .fontSize(30)
+        .opacity(0.75)
+      Text(this.loadError)
+        .fontSize(13)
+        .fontColor('#A7B4C7')
+        .textAlign(TextAlign.Center)
+        .margin({ top: 12, left: 24, right: 24 })
+      Text('重新尝试')
+        .fontSize(12.5)
+        .fontColor(ACCENT)
+        .padding({ left: 20, right: 20, top: 8, bottom: 8 })
+        .margin({ top: 14 })
+        .borderRadius(999)
+        .backgroundColor('#2938BDF8')
+        .border({ width: 1, color: '#6638BDF8' })
+        .onClick(() => {
+          this.loadError = '';
+          this.reloadCurrent();
+        })
+    }
+    .width('100%')
+    .layoutWeight(1)
+    .justifyContent(FlexAlign.Center)
+    .alignItems(HorizontalAlign.Center)
+  }
+
+  /** 重拉当前分段（错误态的「重新尝试」与空态的「重新获取」共用） */
+  private reloadCurrent(): void {
+    if (this.activeTab === TAB_UPCOMING) {
+      this.ensureUpcoming(true);
+    } else {
+      this.ensurePrevious(true);
+    }
+  }
+
+  /**
+   * 下拉刷新收口。
+   *
+   * 不能用 load 的 then 收尾：ensureUpcoming/ensurePrevious 是 void（内部自带
+   * 三道闸与 catch），拿不到「什么时候结束」。这里按一个短延时收口即可 ——
+   * 刷新指示器只要「转一会儿就停」，精确对齐最后一字节没有意义，
+   * 反而会让弱网下的转圈卡到十几秒不停。
+   */
+  private onPullRefresh(): void {
+    this.reloadCurrent();
+    setTimeout(() => {
+      this.refreshing = false;
+    }, 700);
+  }
+
   @Builder
   emptyState() {
     Column() {
@@ -1222,6 +1387,19 @@ export struct LaunchView {
           .onClick(() => {
             this.resetFilter();
           })
+      } else {
+        // 没有筛选却空了 = 数据侧真没东西，给一个重新拉取的出口。
+        // 对位小程序空态的「重新获取」按钮（.btn @click="reload"）。
+        Text('重新获取')
+          .fontSize(12)
+          .fontColor(ACCENT)
+          .padding({ left: 14, right: 14, top: 6, bottom: 6 })
+          .margin({ top: 12 })
+          .borderRadius(999)
+          .border({ width: 1, color: '#6638BDF8' })
+          .onClick(() => {
+            this.reloadCurrent();
+          })
       }
     }
     .width('100%')
@@ -1239,12 +1417,15 @@ export struct LaunchView {
   @Builder
   footer() {
     Row() {
+      // 文案逐条对位小程序 pages/index/index.vue:133-138 的四态链。
+      // 「上拉」是微信的措辞，鸿蒙这边手势一样（List 触底自动加载），保留原词
+      // 反而让两端文案一致，用户从微信过来不会有认知落差。
       if (this.activeTab === TAB_UPCOMING && !this.moreDone) {
-        Text(this.loadingMore ? '正在加载更多…' : '上拉加载更多')
+        Text(this.loadingMore ? '正在加载后续排期…' : '上拉加载更多')
           .fontSize(11)
           .fontColor('#55617A')
       } else if (this.activeTab === TAB_UPCOMING) {
-        Text('已加载全部待发射任务')
+        Text('已显示全部 ' + this.filteredList().length + ' 条')
           .fontSize(11)
           .fontColor('#3C4760')
       } else {
@@ -1463,22 +1644,45 @@ export struct LaunchView {
 
   // ---- 右下角两个悬浮圆钮 ----
 
-  /** 悬浮钮①：搜索（有筛选生效时右上角挂数字角标） */
+  /**
+   * 悬浮钮①：搜索。
+   *
+   * 图标是**纯几何画的**，不用 emoji —— 小程序也是这么做的（.fab-lens + .fab-handle
+   * 两个 div 拼放大镜）。原因很实在：emoji 在深色玻璃球上会跳出彩色，跟旁边那颗球不搭。
+   * 也不用 $r('app.media.*')：工程里没有搜索图标资源，引不存在的 media 直接编译失败。
+   *
+   * 尺寸对位：圆环外径 22rpx→11vp、描边 2.5rpx→1.25vp、手柄 10×2.5rpx→5×1.25vp、45°。
+   */
   @Builder
   fabSearch() {
     Stack({ alignContent: Alignment.TopEnd }) {
-      // 图标用 emoji 而不是 $r('app.media.*')：工程里没有搜索图标资源，
-      // 引用不存在的 media 会直接编译失败
       Column() {
-        Text('🔍')
-          .fontSize(18)
+        Stack({ alignContent: Alignment.TopStart }) {
+          Circle({ width: 11, height: 11 })
+            .fillOpacity(0)
+            .stroke('#F0FFFFFF')
+            .strokeWidth(1.25)
+            .offset({ x: 1.5, y: 1.5 })
+
+          Row()
+            .width(5)
+            .height(1.25)
+            .borderRadius(1)
+            .backgroundColor('#F0FFFFFF')
+            .offset({ x: 11, y: 12 })
+            .rotate({ angle: 45 })
+        }
+        .width(16)
+        .height(16)
       }
       .width(FAB_SIZE)
       .height(FAB_SIZE)
       .borderRadius(FAB_SIZE / 2)
-      .backgroundColor('#F21E283C')
-      .border({ width: 1, color: '#1AFFFFFF' })
-      .shadow({ radius: 16, color: '#80000000', offsetY: 4 })
+      // 对位 .fab：rgba(255,255,255,0.06) 底 + blur(26rpx) + 0.16 描边 + 双层阴影
+      .backgroundColor('#0FFFFFFF')
+      .backdropBlur(13)
+      .border({ width: 1, color: '#29FFFFFF' })
+      .shadow({ radius: 16, color: '#42000000', offsetY: 6 })
       .justifyContent(FlexAlign.Center)
       .alignItems(HorizontalAlign.Center)
       .onClick(() => {
@@ -1486,56 +1690,68 @@ export struct LaunchView {
       })
 
       if (this.activeFilterCount() > 0) {
-        // 用 toString 而不是 `'' + n`：ArkTS 对隐式数值转字符串的检查更严，
-        // 显式转换在这里零成本
+        // 角标用琥珀黄，对位 .fab-badge 的 rgba(245,195,59,0.94)。
+        // 不用天蓝：天蓝在这套界面里是主色/选中色，拿它当角标会跟选中态混起来；
+        // 琥珀在深色底上跳得出来又不抢主视觉。24rpx→12vp，字 15rpx→7.5vp。
         Text(this.activeFilterCount().toString())
-          .fontSize(9)
+          .fontSize(7.5)
           .fontWeight(FontWeight.Medium)
-          .fontColor('#04121C')
+          .fontColor('#10151F')
           .textAlign(TextAlign.Center)
-          .width(16)
-          .height(16)
-          .borderRadius(8)
-          .backgroundColor(ACCENT)
-          // offset 不参与布局，角标可以越出圆钮边界
-          .offset({ x: 4, y: -4 })
+          .constraintSize({ minWidth: 12 })
+          .height(12)
+          .padding({ left: 2.5, right: 2.5 })
+          .borderRadius(6)
+          .backgroundColor('#F0F5C33B')
+          .border({ width: 1, color: '#47FFFFFF' })
+          .offset({ x: 1, y: -1 })
       }
     }
     .width(FAB_SIZE)
     .height(FAB_SIZE)
   }
 
-  /** 悬浮钮②：柱状图。三条不同高度的圆角竖条，不依赖任何图标资源 */
+  /**
+   * 悬浮钮②：柱状图。
+   *
+   * 三根**递增的白竖条**（14/22/30rpx → 7/11/15vp，宽 5rpx → 2.5vp，间距 2.5rpx → 1.25vp）。
+   * 小程序里三根**全是** rgba(255,255,255,0.94)，我之前把第三根染成天蓝是自作主张 ——
+   * 两颗球的图标同属「白色线框」家族，混一个彩色进去就破了。
+   */
   @Builder
   fabStats() {
     Column() {
-      Row({ space: 3 }) {
+      Row() {
         Column()
-          .width(3.5)
-          .height(8)
-          .borderRadius(2)
-          .backgroundColor('#A7B4C7')
+          .width(2.5)
+          .height(7)
+          .borderRadius(1)
+          .backgroundColor('#F0FFFFFF')
+          .margin({ left: 1.25, right: 1.25 })
         Column()
-          .width(3.5)
-          .height(13)
-          .borderRadius(2)
-          .backgroundColor('#A7B4C7')
+          .width(2.5)
+          .height(11)
+          .borderRadius(1)
+          .backgroundColor('#F0FFFFFF')
+          .margin({ left: 1.25, right: 1.25 })
         Column()
-          .width(3.5)
-          .height(18)
-          .borderRadius(2)
-          .backgroundColor(ACCENT)
+          .width(2.5)
+          .height(15)
+          .borderRadius(1)
+          .backgroundColor('#F0FFFFFF')
+          .margin({ left: 1.25, right: 1.25 })
       }
-      .height(18)
-      // 底对齐：三条竖条高度不同，靠这个让它们在一条基线上长出来
+      .height(15)
+      // 底对齐：三条高度不同，靠这个让它们在一条基线上长出来
       .alignItems(VerticalAlign.Bottom)
     }
     .width(FAB_SIZE)
     .height(FAB_SIZE)
     .borderRadius(FAB_SIZE / 2)
-    .backgroundColor('#F21E283C')
-    .border({ width: 1, color: '#1AFFFFFF' })
-    .shadow({ radius: 16, color: '#80000000', offsetY: 4 })
+    .backgroundColor('#0FFFFFFF')
+    .backdropBlur(13)
+    .border({ width: 1, color: '#29FFFFFF' })
+    .shadow({ radius: 16, color: '#42000000', offsetY: 6 })
     .justifyContent(FlexAlign.Center)
     .alignItems(HorizontalAlign.Center)
     .onClick(() => {
@@ -1626,40 +1842,59 @@ export struct LaunchView {
             .margin({ bottom: 10 })
         }
 
+        if (this.hasFilter()) {
+          this.onFilterBar()
+        }
+
         if (this.filteredList().length === 0) {
-          // 空列表：要么还在等首屏（骨架），要么真的没有 —— 包括「筛完变空」
-          if (this.loading) {
+          // 三选一，顺序有讲究（对位小程序 v-if 链）：
+          //   1. 首屏失败（有文案）→ 错误态，给「重新尝试」
+          //   2. 首屏还在路上   → 骨架
+          //   3. 真的没有       → 空态
+          // 错误态必须排在骨架前面，否则断网时会永远停在骨架、用户不知道发生了什么
+          if (this.loadError.length > 0) {
+            this.errorState()
+          } else if (this.loading) {
             this.skeletonList()
           } else {
             this.emptyState()
           }
         } else {
-          List({ scroller: this.scroller }) {
-            ForEach(this.filteredList(), (item: LaunchSummary) => {
-              ListItem() {
-                LaunchCard({
-                  item: item,
-                  // 列表卡不再挂倒计时（改回小程序的横向紧凑卡，倒计时只在「下次发射」大卡上）
-                  onSelect: (picked: LaunchSummary) => {
-                    this.openLaunch(picked);
-                  }
-                })
-              }
-              .padding({ bottom: 10 })
-            }, (item: LaunchSummary) => this.keyOf(item))
+          // Refresh 包住 List：对位小程序 enablePullDownRefresh。
+          // 只包列表不包整页 —— 日历模式是 Scroll，下拉刷新对它没意义
+          // （日历的数据来自同一批 upcoming/previous，已经在列表模式维护着）。
+          Refresh({ refreshing: $$this.refreshing }) {
+            List({ scroller: this.scroller }) {
+              ForEach(this.filteredList(), (item: LaunchSummary) => {
+                ListItem() {
+                  LaunchCard({
+                    item: item,
+                    // 列表卡不再挂倒计时（改回小程序的横向紧凑卡，倒计时只在「下次发射」大卡上）
+                    onSelect: (picked: LaunchSummary) => {
+                      this.openLaunch(picked);
+                    }
+                  })
+                }
+                .padding({ bottom: 10 })
+              }, (item: LaunchSummary) => this.keyOf(item))
 
-            ListItem() {
-              this.footer()
+              ListItem() {
+                this.footer()
+              }
             }
+            .width('100%')
+            .height('100%')
+            .scrollBar(BarState.Off)
+            .edgeEffect(EdgeEffect.Spring)
+            .cachedCount(3)
+            // 触底加载：List 自带 onReachEnd，比手算 offset 稳（见 loadMore 的三道闸）
+            .onReachEnd(() => {
+              this.loadMore();
+            })
           }
-          .width('100%')
           .layoutWeight(1)
-          .scrollBar(BarState.Off)
-          .edgeEffect(EdgeEffect.Spring)
-          .cachedCount(3)
-          // 触底加载：List 自带 onReachEnd，比手算 offset 稳（见 loadMore 的三道闸）
-          .onReachEnd(() => {
-            this.loadMore();
+          .onRefreshing(() => {
+            this.onPullRefresh();
           })
         }
       }

@@ -376,7 +376,18 @@ export struct NextLaunch {
     Column() {
       Stack({ alignContent: Alignment.TopStart }) {
         this.heroImage()
-        this.heroMask()
+
+        // 渐隐层必须**贴图片底边**。Stack 的对齐是 TopStart（徽章要在左上角），
+        // 所以遮罩不能直接丢进 Stack —— 会跑到图片顶部，把上半张图压暗成一条灰带
+        // （实测截图就是这个症状：图看着被切成上下两截）。用一层满高 Column
+        // 靠 FlexAlign.End 把它顶到底部。
+        Column() {
+          this.heroMask()
+        }
+        .width('100%')
+        .height(HERO_H)
+        .justifyContent(FlexAlign.End)
+        .hitTestBehavior(HitTestMode.None)
 
         // 徽章在左上角，12vp 内边距（对位 .nl-badge 的 left/top 24rpx）
         Column() {
