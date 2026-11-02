@@ -15,6 +15,9 @@
 
 import { Nav } from './Nav';
 import { LaunchNavParam, PhotoNavParam, RocketNavParam } from './NavParam';
+import { RocketDetailView } from '../view/RocketDetailView';
+import { PhotoDetailView } from '../view/PhotoDetailView';
+import { LaunchDetailView } from '../view/LaunchDetailView';
 
 const BG: string = '#0A0E17';
 const CARD: string = '#141A26';
@@ -71,94 +74,37 @@ function paramRow(label: string, value: string) {
   .alignItems(VerticalAlign.Top)
 }
 
-/** 发射详情页骨架 */
+/**
+ * 发射详情页：真实内容在 LaunchDetailView。
+ *
+ * 为什么这里只留一层包装：@Builder 不是组件、挂不了 @State，
+ * 而详情页要「缓存先上屏、后台再刷新」、要「展开全文」、要倒计时，全是状态。
+ * 所以状态与内容整体放进独立 @Component，@Builder 只负责把路由入参递进去。
+ */
 @Builder
 export function LaunchDetailPage(name: string, param: LaunchNavParam) {
   NavDestination() {
-    Column() {
-      detailHeader('发射详情')
-
-      Column() {
-        paramRow('id', param.id)
-        paramRow('net', param.net)
-        paramRow('title', param.title)
-      }
-      .width('100%')
-      .padding({ left: 16, right: 16, bottom: 12 })
-      .backgroundColor(CARD)
-      .borderRadius(12)
-      .margin({ left: 12, right: 12 })
-
-      Text('骨架页：真实内容待实现')
-        .fontSize(12)
-        .fontColor('#55617A')
-        .margin({ top: 16 })
-    }
-    .width('100%')
-    .height('100%')
-    .backgroundColor(BG)
-    .alignItems(HorizontalAlign.Start)
+    LaunchDetailView({ param: param })
   }
   .hideTitleBar(true)
   .backgroundColor(BG)
 }
 
-/** 图片详情页骨架（看图器） */
+/** 图片详情页：真实内容在 PhotoDetailView（缩放/拖动/下滑关闭需要 @State） */
 @Builder
 export function PhotoDetailPage(name: string, param: PhotoNavParam) {
   NavDestination() {
-    Column() {
-      detailHeader(param.title.length > 0 ? param.title : '图片')
-
-      Column() {
-        paramRow('title', param.title)
-        paramRow('url', param.url)
-      }
-      .width('100%')
-      .padding({ left: 16, right: 16, bottom: 12 })
-      .backgroundColor(CARD)
-      .borderRadius(12)
-      .margin({ left: 12, right: 12 })
-
-      Text('骨架页：真实看图器待实现')
-        .fontSize(12)
-        .fontColor('#55617A')
-        .margin({ top: 16 })
-    }
-    .width('100%')
-    .height('100%')
-    .backgroundColor(BG)
-    .alignItems(HorizontalAlign.Start)
+    PhotoDetailView({ url: param.url, title: param.title })
   }
   .hideTitleBar(true)
-  .backgroundColor(BG)
+  .backgroundColor('#000000')
 }
 
-/** 火箭详情页骨架 */
+/** 火箭详情页：真实内容在 RocketDetailView（@Builder 没有状态，装不下加载过程） */
 @Builder
 export function RocketDetailPage(name: string, param: RocketNavParam) {
   NavDestination() {
-    Column() {
-      detailHeader('火箭详情')
-
-      Column() {
-        paramRow('name', param.name)
-      }
-      .width('100%')
-      .padding({ left: 16, right: 16, bottom: 12 })
-      .backgroundColor(CARD)
-      .borderRadius(12)
-      .margin({ left: 12, right: 12 })
-
-      Text('骨架页：真实内容待实现')
-        .fontSize(12)
-        .fontColor('#55617A')
-        .margin({ top: 16 })
-    }
-    .width('100%')
-    .height('100%')
-    .backgroundColor(BG)
-    .alignItems(HorizontalAlign.Start)
+    RocketDetailView({ rocketName: param.name })
   }
   .hideTitleBar(true)
   .backgroundColor(BG)

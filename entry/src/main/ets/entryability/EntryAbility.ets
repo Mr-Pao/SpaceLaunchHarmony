@@ -21,6 +21,7 @@ import { window } from '@kit.ArkUI';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { fileStore } from '../data/FileStore';
+import { DATA_VERSION } from '../constants/Dataset';
 
 const DOMAIN: number = 0x0000;
 const TAG: string = 'EntryAbility';
@@ -37,7 +38,11 @@ export default class EntryAbility extends UIAbility {
   onCreate(want: Want, launchParam: AbilityConstant.LaunchParam): void {
     hilog.info(DOMAIN, TAG, 'onCreate, windowStage 尚未创建');
     try {
-      fileStore.init(this.context);
+      // 必须带 DATA_VERSION：FileStore 的目录名就是 v{DATA_VERSION}。
+      // 漏传的话 dataVersion 被当成 0、目录落到 dataCache/v0，
+      // 而 Repository 的 storageKey 仍按 v14 生成 —— 缓存实际写进 v0，
+      // 「我的」页显示的目录和真实落盘位置会对不上（曾实测到 v0 + 0 项缓存）。
+      fileStore.init(this.context, DATA_VERSION);
     } catch (e) {
       // 初始化失败不能让应用起不来：Repository 内部对 fileStore 不可用
       // 是有兜底的（降级为纯内存 + 直连 CDN），这里只记录
