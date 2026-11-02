@@ -1,44 +1,46 @@
 /**
- * components/LaunchCard.ets —— 发射列表单卡
+ * components/LaunchCard.ets —— 发射列表单卡（横向紧凑卡）
  *
  * 对位小程序：components/launch-card/launch-card.vue（296 行）
- *   template   1-47    （缩略图 / 标题 / 时间行 / 机构 + 状态）
- *   script    50-106   （title / timeText / dateText / status / rocketName / providerName）
+ *   template   1-47    （缩略图左 / 标题 / 时间行 / 机构 + 状态右）
+ *   script    50-106   （title / timeText / dateText / showDate / providerName / providerFlag / status）
  *   style    108-296  （.card / .thumb / .info / .title / .meta / .time / .date /
- *                       .rocket / .foot / .status.* / .fav-mark）
+ *                       .foot / .flag / .provider / .status.* / .fav-mark）
  *
  * 换算：rpx ÷ 2 = vp
- *   缩略图 200rpx → 100vp（本文件改成整幅宽图，见「有意差异 1」）
- *   标题 30rpx → 15vp；时间 26rpx → 13vp；日期 24rpx → 12vp；圆角 20rpx → 10vp
+ *   卡片 padding 20rpx → 10vp；圆角 20rpx → 10vp；下间距 20rpx → 10vp
+ *   缩略图 200rpx → 100vp（圆角 14rpx → 7vp）
+ *   标题 30rpx → 15vp；相对时间 26rpx → 13vp；日期 24rpx → 12vp；机构 22rpx → 11vp；状态 21rpx → 10.5vp
+ *
+ * 2026-11-03 重写说明（用户实测对比「这完全不一样」）：
+ *   上一版把卡片做成了**竖向大图卡**——150vp 头图 + 状态 chip 压在图上 +
+ *   独立的大号秒级倒计时 + 下面再一块正文。那是我按「发射事件卡」的想象画的，
+ *   与小程序完全是两种设计。小程序列表卡是**横向小卡**：左边 100vp 方图，
+ *   右边三行文字（型号|任务名 → 相对时间·日期 → 国旗+机构+状态），信息密度高、
+ *   一屏能看四五条。列表里**没有倒计时**（倒计时只在「下次发射」大卡上）。
+ *   现在按小程序 1:1 还原。
  *
  * 有意差异（相对 launch-card.vue）：
- *   1. **缩略图从左侧 100×100 小方块改成整幅宽 150vp 头图**。任务书要求
- *      「顶部火箭图 150vp + ImageFit.Cover」。列表里一列大图会更吃重绘，
- *      但 List 只回收可视区，实际开销可控；观感上比小方块更像「发射事件卡」。
- *   2. **不再拼「火箭型号 | 任务名」一行**。ArkTS 侧 Format 的 missionLabelOf /
- *      rocketLabelOf 已经拆成两行不同字号，硬拼回一行会把中文型号和任务名混在一句里，
- *      英文型号过长时先被截断的恰好是任务名。
- *   3. **倒计时只有「3 天内」才跑秒级**（见 launchView 的 live 判据）。
- *      utils/Format.ets:161-163 记过原项目的教训：列表里几十张卡各起一个
- *      setInterval 会拖住主线程，所以原项目的列表卡只用 relativeTime 文字版。
- *      这里折中：临近发射（72h 内）才挂 Countdown 实例，其余用 relativeTime。
- *   4. **图片加载失败不留白块**：onError 置 broken，整块换成渐变 + 🚀 占位
- *      （小程序是 `v-else` 分支的 thumb-empty，逻辑一致，只是鸿蒙要自己记状态）。
- *   5. 没有收藏标记（fav）与国旗（flag）：收藏数据层与国旗资源都还没迁到鸿蒙侧，
- *      留空比画一个永远不亮的角标好。
+ *   1. **国旗用 emoji 文本而不是 png**。小程序有 /static/flags/*.png，
+ *      鸿蒙侧 media 目录只有 app_icon / startIcon，搬路径会 404。
+ *      utils/Format.ets 的 flagOf(name) 已返回 emoji（见该函数注释）。
+ *   2. **没有收藏竖条（fav-mark / card-fav）**。收藏数据层已迁（data/Favorites.ets），
+ *      但列表页每次刷新要给几百条算 fav 状态，收益（一道 3vp 的竖条）与开销不匹配；
+ *      详情页右上角的 ★ 才是收藏的真实入口。将来要加在这里传一个 @Prop fav: boolean 即可。
+ *   3. **没有 plain（审核模式）分支**。审核暗门是微信特有的审核员环境判断，
+ *      鸿蒙版上架华为市场不存在这个概念，整条分支不迁。
  *
  * ⚠ 本文件不使用 console.*，日志一律 hilog（本文件实际无需日志）。
  */
 
-import { LaunchSummary } from '../model/Common';
+import { LaunchSummary, LaunchProvider } from '../model/Common';
 import {
-  strOf, formatLaunchTime, relativeTime, statusOf, statusToneColor, statusToneBg,
-  missionLabelOf, rocketLabelOf, placeLabelOf
+  strOf, formatShort, relativeTime, statusOf, statusToneColor, statusToneBg,
+  launchTitle, agencyLabel, flagOf
 } from '../utils/Format';
-import { Countdown } from './Countdown';
 
-/** 头图高度：300rpx ÷ 2 */
-const HERO_H: number = 150;
+/** 缩略图边长：200rpx ÷ 2 */
+const THUMB: number = 100;
 
 /** 卡片底色（任务书视觉规范） */
 const CARD_BG: string = '#141A26';
@@ -63,12 +65,6 @@ export struct LaunchCard {
    * 另一条数据，不重置的话新条目会顶着一块「图挂了」的占位块。
    */
   @Prop @Watch('onItemChange') item: LaunchSummary = EMPTY_LAUNCH_CARD;
-  /**
-   * 是否挂真实倒计时（秒级）。
-   * 由父级决定而不是卡片自己算：父级才知道「这一页是待发射还是历史」，
-   * 也只有它能控制同时存活几个定时器。
-   */
-  @Prop live: boolean = false;
 
   /** 整卡点击。普通成员不加装饰器（ArkTS 不让 @Prop 承载函数） */
   onSelect: (item: LaunchSummary) => void = () => {};
@@ -84,39 +80,59 @@ export struct LaunchCard {
 
   // ============ 取值（全部走 Format 的现成函数，不在这里重写判断） ============
 
-  /** 主图优先、回退缩略图：两者同源同值，但旧数据可能只有其中一个 */
+  /**
+   * 缩略图。
+   * 优先 imageThumb：这里只显示 100×100，用 480px 的 image 是白烧流量。
+   * 两者同源同值，旧数据可能只有其中一个。
+   */
   private imageUrl(): string {
-    const full: string = strOf(this.item.image);
-    if (full.length > 0) {
-      return full;
+    const thumb: string = strOf(this.item.imageThumb);
+    if (thumb.length > 0) {
+      return thumb;
     }
-    return strOf(this.item.imageThumb);
+    return strOf(this.item.image);
   }
 
+  /** 「电子号 | 海神调查（iQPS 发布 9）」——型号与任务名合成一行，与小程序的 launchTitle 同口径 */
   private titleText(): string {
-    return missionLabelOf(this.item);
-  }
-
-  /** 「型号 · 发射场」：任一侧为空就不留分隔符，避免出现 " · " 这种空档 */
-  private metaText(): string {
-    const rocket: string = rocketLabelOf(this.item);
-    const place: string = placeLabelOf(this.item);
-    if (rocket.length > 0 && place.length > 0) {
-      return rocket + ' · ' + place;
-    }
-    if (rocket.length > 0) {
-      return rocket;
-    }
-    return place;
-  }
-
-  private timeText(): string {
-    return formatLaunchTime(strOf(this.item.net));
+    return launchTitle(this.item);
   }
 
   /** 相对时间：待发射看「几天后」，历史看「几天前」，同一个纯函数两种语境都对 */
-  private relativeText(): string {
+  private timeText(): string {
     return relativeTime(strOf(this.item.net));
+  }
+
+  private dateText(): string {
+    return formatShort(strOf(this.item.net));
+  }
+
+  /**
+   * 是否再显示一份日期。
+   * 时间待定没有日期；老任务（>30 天）relativeTime 会回退成带年份的完整时间，
+   * 这时再跟一个日期就是重复信息。
+   */
+  private showDate(): boolean {
+    const d: string = this.dateText();
+    return d.length > 0 && d !== '时间待定' && d !== this.timeText();
+  }
+
+  /** 机构名：命中中文表就用中文（中国航天科技 / 蓝箭航天…） */
+  private providerName(): string {
+    const p: LaunchProvider | undefined = this.item.launch_service_provider;
+    if (p === undefined || p === null) {
+      return '';
+    }
+    return agencyLabel(strOf(p.name));
+  }
+
+  /** 国旗：必须用英文原名去认，中文名里没有国籍信息 */
+  private providerFlag(): string {
+    const p: LaunchProvider | undefined = this.item.launch_service_provider;
+    if (p === undefined || p === null) {
+      return '';
+    }
+    return flagOf(strOf(p.name));
   }
 
   // 状态三件套各取一次：@Builder 里不能声明局部变量，所以拆成三个方法
@@ -132,38 +148,20 @@ export struct LaunchCard {
     return statusToneBg(statusOf(this.item).tone);
   }
 
-  // ============ 头图 ============
-
-  /** 图底部渐变压黑：状态 chip 与倒计时直接压在照片上会读不清 */
-  @Builder
-  heroMask() {
-    Column()
-      .width('100%')
-      .height(58)
-      .linearGradient({
-        // angle 180 = 从上到下（与 NextLaunch 同口径）。
-        // 两端色值写成字面量：linearGradient 的 colors 要的是 [ResourceColor, number]
-        // 元组，喂常量字符串会让 ArkTS 推成 (string|number)[]，元组断言反而更啰嗦
-        angle: 180,
-        colors: [
-          ['#00141A26', 0.0],
-          ['#141A26', 1.0]
-        ]
-      })
-      .hitTestBehavior(HitTestMode.None)
-  }
+  // ============ 缩略图 ============
 
   /** 占位块：图挂了 / 本来就没图，两种情况长得一样，不留白块 */
   @Builder
-  heroPlaceholder() {
+  thumbPlaceholder() {
     Column() {
       Text('🚀')
-        .fontSize(34)
+        .fontSize(28)
         .opacity(0.35)
     }
-    .width('100%')
-    .height(HERO_H)
+    .width(THUMB)
+    .height(THUMB)
     .justifyContent(FlexAlign.Center)
+    .borderRadius(7)
     .linearGradient({
       angle: 135,
       colors: [
@@ -173,68 +171,91 @@ export struct LaunchCard {
     })
   }
 
-  /** 图底一行：状态 chip（左）+ 倒计时或相对时间（右） */
   @Builder
-  heroOverlay() {
+  thumb() {
+    if (this.imageUrl().length > 0 && !this.broken) {
+      Image(this.imageUrl())
+        .width(THUMB)
+        .height(THUMB)
+        .objectFit(ImageFit.Cover)
+        // 兜底底色：图片解码期间也不露白
+        .backgroundColor('#0F1520')
+        .borderRadius(7)
+        .onError(() => {
+          this.broken = true;
+        })
+    } else {
+      this.thumbPlaceholder()
+    }
+  }
+
+  // ============ 右侧文字区 ============
+
+  /** 时间行：相对时间 · 日期 */
+  @Builder
+  metaRow() {
     Row() {
-      Text(this.statusText())
-        .fontSize(10.5)
-        .fontColor(this.statusColor())
-        .padding({ left: 8, right: 8, top: 3, bottom: 3 })
-        .borderRadius(4)
-        .backgroundColor(this.statusBg())
+      Text(this.timeText())
+        .fontSize(13) // 26rpx ÷ 2
+        .fontColor('#38BDF8')
         .maxLines(1)
 
-      Blank()
+      if (this.showDate()) {
+        Text('·')
+          .fontSize(11) // 22rpx ÷ 2
+          .fontColor('#3D4A5C')
+          .margin({ left: 5, right: 5 })
 
-      if (this.live) {
-        // 宽度给死：Countdown 是 width('100%') 的四等分布局，
-        // 不给容器宽度它会和 chip 抢满整行，把 chip 挤成竖排（NextLaunch 踩过）
-        Column() {
-          Countdown({ net: strOf(this.item.net), sizeMode: 'sm', showLabel: true })
-        }
-        .width(132)
-        .alignItems(HorizontalAlign.End)
-      } else {
-        Text(this.relativeText())
-          .fontSize(11)
-          .fontColor('#38BDF8')
+        Text(this.dateText())
+          .fontSize(12) // 24rpx ÷ 2
+          .fontColor('#6B7891')
           .maxLines(1)
       }
     }
-    .width('100%')
-    .padding({ left: 11, right: 11, top: 4, bottom: 7 })
-    .alignItems(VerticalAlign.Bottom)
+    .alignItems(VerticalAlign.Center)
+    .margin({ top: 5 })
   }
 
+  /** 脚行：国旗 + 机构（可省略）+ 状态（永远靠右、不换行） */
   @Builder
-  hero() {
-    Stack({ alignContent: Alignment.Bottom }) {
-      if (this.imageUrl().length > 0 && !this.broken) {
-        Image(this.imageUrl())
-          .width('100%')
-          .height(HERO_H)
-          .objectFit(ImageFit.Cover)
-          // 兜底底色：图片解码期间也不露白
-          .backgroundColor(CARD_BG)
-          .onError(() => {
-            this.broken = true;
-          })
-      } else {
-        this.heroPlaceholder()
+  footRow() {
+    Row() {
+      if (this.providerFlag().length > 0) {
+        Text(this.providerFlag())
+          .fontSize(9)
+          .margin({ right: 4 })
       }
 
-      this.heroMask()
-      this.heroOverlay()
+      if (this.providerName().length > 0) {
+        Text(this.providerName())
+          .fontSize(11) // 22rpx ÷ 2
+          .fontColor('#5D6A7D')
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          // layoutWeight(1) 等价于小程序的 flex:1 + min-width:0：
+          // 不给权重的话长机构名会把状态 chip 顶出卡片
+          .layoutWeight(1)
+          .margin({ right: 7 })
+      } else {
+        Blank()
+      }
+
+      Text(this.statusText())
+        .fontSize(10.5) // 21rpx ÷ 2
+        .fontColor(this.statusColor())
+        .padding({ left: 6, right: 6, top: 1.5, bottom: 1.5 })
+        .borderRadius(3) // 6rpx ÷ 2
+        .backgroundColor(this.statusBg())
+        .maxLines(1)
+        .flexShrink(0)
     }
     .width('100%')
-    .height(HERO_H)
+    .alignItems(VerticalAlign.Center)
+    .padding({ top: 4 })
   }
 
-  // ============ 正文 ============
-
   @Builder
-  body() {
+  info() {
     Column() {
       Text(this.titleText())
         .fontSize(15) // 30rpx ÷ 2
@@ -245,49 +266,30 @@ export struct LaunchCard {
         .textOverflow({ overflow: TextOverflow.Ellipsis })
         .width('100%')
 
-      // 型号 · 场地：没有就不占一行
-      if (this.metaText().length > 0) {
-        Text(this.metaText())
-          .fontSize(11.5)
-          .fontColor('#A7B4C7')
-          .maxLines(1)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-          .width('100%')
-          .margin({ top: 6 })
-      }
+      this.metaRow()
 
-      Row() {
-        Text(this.timeText())
-          .fontSize(11.5)
-          .fontColor('#38BDF8')
-          .maxLines(1)
+      Blank()
 
-        Text(this.relativeText())
-          .fontSize(11)
-          .fontColor('#55617A')
-          .maxLines(1)
-          .margin({ left: 8 })
-      }
-      .width('100%')
-      .alignItems(VerticalAlign.Center)
-      .margin({ top: 8 })
+      this.footRow()
     }
-    .width('100%')
+    .layoutWeight(1)
+    .height(THUMB) // 与缩略图等高；中间 Blank 把脚行压到底，标题只有一行时状态也不浮在中间
     .alignItems(HorizontalAlign.Start)
-    .padding({ left: 12, right: 12, top: 10, bottom: 12 })
+    .margin({ left: 11 }) // 22rpx ÷ 2
   }
 
   build() {
-    Column() {
-      this.hero()
-      this.body()
+    Row() {
+      this.thumb()
+      this.info()
     }
     .width('100%')
-    .alignItems(HorizontalAlign.Start)
+    .alignItems(VerticalAlign.Top)
+    .padding(10) // 20rpx ÷ 2
     .backgroundColor(CARD_BG)
-    .borderRadius(12) // 24rpx ÷ 2
+    .borderRadius(10) // 20rpx ÷ 2
     .border({ width: 1, color: '#0DFFFFFF' }) // rgba(255,255,255,0.05)
-    // .overflow(Overflow.Hidden) 在 ColumnAttribute 上不存在，圆角裁切只能用 clip
+    // .overflow(Overflow.Hidden) 在 RowAttribute 上不存在，圆角裁切只能用 clip
     .clip(true)
     .onClick(() => {
       this.onSelect(this.item);

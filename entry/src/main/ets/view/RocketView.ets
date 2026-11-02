@@ -354,8 +354,7 @@ export struct RocketView {
     this.topLaunchName = bestLaunch !== null ? bestLaunch.zh : '—';
     this.topLaunchText =
       bestLaunch !== null ? bestLaunch.launches.toString() + ' 次发射' : '—';
-    this.reusableText = reusable.toString() + ' 型';
-  }
+    this.reusableText = reusable.toString() + ' 型';  }
 
   // ============ 交互 ============
 
@@ -541,13 +540,29 @@ export struct RocketView {
     .padding({ left: PAGE_PAD, right: PAGE_PAD, top: 12, bottom: 2 })
   }
 
-  /** 三格统计卡：运力之最 / 最活跃 / 可复用型号数 */
+  /**
+   * 三格统计卡：运力之最 / 最活跃 / 可复用型号数。
+   *
+   * ⚠⚠ 这里踩过一个很深的 React 式直觉坑，别再改回去：
+   * 1. `@Builder` **按值传参**时不建立响应式依赖。曾经写成
+   *    `this.statCell('运力之最', this.topLeoName, this.topLeoText)`，
+   *    结果 statGrid 的依赖集里压根没有 topLeoName，异步算完之后不重绘，
+   *    三格永远停在初值「— / 0 型」。
+   * 2. 就算把外层改成无参 builder `cellLeo()`，只要它内部还在
+   *    `this.statCellBody(..., this.topLeoName, ...)` 这样传值，**内层依然不刷新** ——
+   *    参数一旦按值传进 @Builder，里面的 Text 就只认调用那一刻的字符串快照。
+   * 3. 所以最终写法是：每格一个无参 @Builder，Text 里**直接读 this.topXxx 成员**，
+   *    不再经过任何带参 builder。三格之间样式重复了一点，但这是能刷新的唯一稳妥写法。
+   *
+   * 实证：日志 `refreshStats 结果 leo=星舰 V3/100 吨 launch=猎鹰 9 号 Block 5/644 次发射 reuse=25`
+   * 一直是对的，只是界面不刷新。
+   */
   @Builder
   statGrid() {
     Row() {
-      this.statCell('运力之最', this.topLeoName, this.topLeoText)
-      this.statCell('最活跃', this.topLaunchName, this.topLaunchText)
-      this.statCell('可复用', '在役型号', this.reusableText)
+      this.cellLeo()
+      this.cellActive()
+      this.cellReuse()
     }
     .width('100%')
     .padding({ top: 8, bottom: 8 })
@@ -557,14 +572,12 @@ export struct RocketView {
     .alignItems(VerticalAlign.Top)
   }
 
+  /** 运力之最（第一格）—— Text 直接读成员，别抽带参 builder */
   @Builder
-  statCell(caption: string, name: string, value: string) {
+  cellLeo() {
     Column() {
-      Text(caption)
-        .fontSize(9)
-        .fontColor(TXT_DIM)
-        .maxLines(1)
-      Text(name)
+      Text('运力之最').fontSize(9).fontColor(TXT_DIM).maxLines(1)
+      Text(this.topLeoName)
         .fontSize(12)
         .fontWeight(FontWeight.Medium)
         .fontColor(TXT_MAIN)
@@ -572,7 +585,58 @@ export struct RocketView {
         .textOverflow({ overflow: TextOverflow.Ellipsis })
         .width('100%')
         .margin({ top: 3 })
-      Text(value)
+      Text(this.topLeoText)
+        .fontSize(10)
+        .fontColor(ACCENT)
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .width('100%')
+        .margin({ top: 2 })
+    }
+    .layoutWeight(1)
+    .alignItems(HorizontalAlign.Start)
+    .padding({ left: 10, right: 6 })
+  }
+
+  /** 发射最活跃（第二格） */
+  @Builder
+  cellActive() {
+    Column() {
+      Text('最活跃').fontSize(9).fontColor(TXT_DIM).maxLines(1)
+      Text(this.topLaunchName)
+        .fontSize(12)
+        .fontWeight(FontWeight.Medium)
+        .fontColor(TXT_MAIN)
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .width('100%')
+        .margin({ top: 3 })
+      Text(this.topLaunchText)
+        .fontSize(10)
+        .fontColor(ACCENT)
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .width('100%')
+        .margin({ top: 2 })
+    }
+    .layoutWeight(1)
+    .alignItems(HorizontalAlign.Start)
+    .padding({ left: 10, right: 6 })
+  }
+
+  /** 可复用在役型号数（第三格） */
+  @Builder
+  cellReuse() {
+    Column() {
+      Text('可复用').fontSize(9).fontColor(TXT_DIM).maxLines(1)
+      Text('在役型号')
+        .fontSize(12)
+        .fontWeight(FontWeight.Medium)
+        .fontColor(TXT_MAIN)
+        .maxLines(1)
+        .width('100%')
+        .margin({ top: 3 })
+      Text(this.reusableText)
         .fontSize(10)
         .fontColor(ACCENT)
         .maxLines(1)

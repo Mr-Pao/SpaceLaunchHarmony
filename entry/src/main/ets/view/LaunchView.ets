@@ -44,7 +44,9 @@ import { LaunchSummary, UpcomingPayload, PreviousPayload, UpcomingMorePayload } 
 import { LaunchStatus, LaunchMission, LaunchProvider, LaunchRocket, RocketConfig } from '../model/Common';
 import { LaunchCard } from '../components/LaunchCard';
 import { LaunchCalendar } from '../components/LaunchCalendar';
-import { Nav, ROUTE_STATS } from '../routes/Nav';
+import { NextLaunch } from '../components/NextLaunch';
+import { StarField } from '../components/StarField';
+import { Nav, ROUTE_STATS, ROUTE_VERSION } from '../routes/Nav';
 import { LaunchNavParam } from '../routes/NavParam';
 import {
   strOf, parseTime, formatGeneratedAt, countryOf, providerLabelOf, rocketLabelOf, placeLabelOf
@@ -99,6 +101,19 @@ const LIVE_WINDOW_MS: number = 72 * 3600 * 1000;
  * 每次 build 新建数组会让 ArkUI 判定数据源变化、白白重建全部骨架节点。
  */
 const SKELETON_SLOTS: number[] = [0, 1, 2];
+
+/**
+ * 「下次发射」的空哨兵。
+ *
+ * NextLaunch 的 @Prop item 必须有非空默认值（interface 不能当默认值），
+ * 父级也不能传 undefined。判断「有没有下次发射」一律用 `nextItem.id.length > 0`，
+ * 不要拿 net 判空 —— 真实数据里确实存在 net 为空待定的条目。
+ */
+const EMPTY_NEXT: LaunchSummary = {
+  id: '',
+  name: '',
+  net: ''
+};
 
 /**
  * 三个筛选维度的键。
@@ -164,6 +179,19 @@ export struct LaunchView {
   @State upcoming: LaunchSummary[] = [];
   /** 已发射列表（只有首屏，历史不做增量） */
   @State previous: LaunchSummary[] = [];
+
+  /**
+   * 「下次发射」那条，给列表上方的大卡用。
+   *
+   * 对位小程序 pages/index/index.vue 的计算属性 nextLaunch：
+   *   `list.value.find(x => x.net && new Date(x.net).getTime() > nowTick)`
+   * 小程序是遍历待发射列表找第一条过点即止（列表本身按 net 升序，等价于「最近一条」）。
+   * 这里同样取第一条 net > now 的记录，不 sort 全表 —— 100+ 条每次重绘都 sort 是白开销。
+   *
+   * 空值用 EMPTY_NEXT 哨兵（而不是 undefined），因为 @State 承载对象、
+   * 且 NextLaunch 组件的 @Prop 需要非空默认值。
+   */
+  @State nextItem: LaunchSummary = EMPTY_NEXT;
 
   /** 首屏是否还在等数据。只在「列表为空」时用来决定露骨架还是露空态 */
   @State loading: boolean = true;
@@ -330,6 +358,33 @@ export struct LaunchView {
     // 反之说明还有 upcomingMore 可翻 —— 两次判断都要写，否则后台刷新把
     // 已追加的 373 条换回 100 条后，moreDone 还停在 true，列表永远补不回来
     this.moreDone = list.length >= total;
+    // 列表换了，下次发射跟着重挑（后台 onUpdate 也会走这里）
+    this.nextItem = this.pickNext(list);
+  }
+
+  /**
+   * 从待发射列表里挑出「下次发射」。
+   *
+   * 对位小程序 index.vue 的 nextLaunch：按顺序找第一条 net > now 的记录。
+   * 列表本身由 CI 按 net 升序产出，所以第一条命中就是最近的一次 ——
+   * 不做全表 sort（100+ 条每次重绘都排一遍是白开销）。
+   *
+   * 用 parseTime 而不是 new Date(net)：解析失败返 0，天然被 `> now` 拦下，
+   * 不会出现 NaN 比较恒 false 的隐蔽 bug。id 为空也跳过 —— 没有 id 进不了详情页。
+   */
+  private pickNext(list: LaunchSummary[]): LaunchSummary {
+    const now: number = Date.now();
+    for (let i = 0; i < list.length; i++) {
+      const it: LaunchSummary = list[i];
+      if (it.id.length === 0) {
+        continue;
+      }
+      const at: number = parseTime(it.net);
+      if (at > now) {
+        return it;
+      }
+    }
+    return EMPTY_NEXT;
   }
 
   private applyPrevious(data: PreviousPayload): void {
@@ -870,26 +925,52 @@ export struct LaunchView {
 
   // ============ UI ============
 
-  /** 页头：19vp Bold 白 + 11vp 灰副标题（与 TodayView.dateRow 同档，只是标题换成固定词） */
+  /**
+   * 页头：logo + 「太空发射任务」。
+   *
+   * 对位小程序 pages/index/index.vue:7-16 的 .nav-row：
+   *   nav-logo 60rpx → 30vp，圆形 + 天蓝光晕 box-shadow 24rpx → radius 12 / color #4D38BDF8
+   *   nav-title 46rpx → 23vp，600 / letter-spacing 2rpx → 1vp
+   * 小程序那边点 logo 进版本记录（goVersion），这里同样接 Nav.pushBlank(ROUTE_VERSION)。
+   *
+   * ⚠ 我第一版写成「发射 / 全部发射任务 · 点击卡片查看详情」两行小标题 —— 用户对比后
+   * 说「这完全不一样」。小程序是个品牌页头：30vp 圆形 logo + 23vp 大字项目名。
+   * 副标题只保留加载态提示，正常态不再占一行（小程序也没有）。
+   */
   @Builder
   header() {
-    Column() {
-      Text('发射')
-        .fontSize(19)
-        .fontWeight(FontWeight.Bold)
-        .fontColor('#FFFFFF')
-        .letterSpacing(1)
+    Row() {
+      Image($r('app.media.app_icon'))
+        .width(30)
+        .height(30)
+        .borderRadius(15)
+        .objectFit(ImageFit.Cover)
+        // 小程序是 box-shadow: 0 0 24rpx rgba(56,189,248,0.3)。
+        // ArkUI 的 shadow radius 是模糊半径（不是扩散），24rpx→12，30% alpha→#4D。
+        .shadow({ radius: 12, color: '#4D38BDF8', offsetX: 0, offsetY: 0 })
+        .margin({ right: 8 })
+        .onClick(() => {
+          Nav.pushBlank(ROUTE_VERSION);
+        })
 
-      Text(this.loading && this.currentList().length === 0
-        ? '正在加载发射数据…'
-        : '全部发射任务 · 点击卡片查看详情')
-        .fontSize(11)
-        .fontColor('#6B7891')
-        .margin({ top: 4 })
+      Text('太空发射任务')
+        .fontSize(23) // 46rpx ÷ 2
+        .fontWeight(FontWeight.Medium)
+        .fontColor('#FFFFFF')
+        .letterSpacing(1) // 2rpx ÷ 2
+        .maxLines(1)
+        .layoutWeight(1)
+
+      if (this.loading && this.currentList().length === 0) {
+        LoadingProgress()
+          .width(16)
+          .height(16)
+          .color('#38BDF8')
+      }
     }
     .width('100%')
-    .alignItems(HorizontalAlign.Start)
-    .padding({ top: 12, bottom: 12 })
+    .alignItems(VerticalAlign.Center)
+    .padding({ top: 10, bottom: 12 })
   }
 
   /**
@@ -1007,34 +1088,45 @@ export struct LaunchView {
 
   // ---- 三套占位：骨架 / 空态 / 列表 footer ----
 
-  /** 单张骨架卡：形状按 LaunchCard 的头图 150 + 两行文字搭，避免落屏时跳动 */
+  /** 单张骨架卡：形状按 LaunchCard 的横向卡搭（100vp 方图 + 右侧三行），避免落屏时跳动 */
   @Builder
   skeletonCard() {
-    Column() {
+    Row() {
       Row()
-        .width('100%')
-        .height(150)
+        .width(100)
+        .height(100)
+        .borderRadius(7)
         .backgroundColor('#1A2231')
+
       Column() {
         Row()
-          .width('72%')
+          .width('82%')
           .height(13)
           .borderRadius(4)
           .backgroundColor('#1A2231')
         Row()
-          .width('46%')
+          .width('52%')
           .height(11)
           .borderRadius(4)
           .backgroundColor('#161D2A')
           .margin({ top: 8 })
+        Blank()
+        Row()
+          .width('38%')
+          .height(10)
+          .borderRadius(4)
+          .backgroundColor('#161D2A')
       }
-      .width('100%')
+      .layoutWeight(1)
+      .height(100)
+      .margin({ left: 11 })
       .alignItems(HorizontalAlign.Start)
-      .padding({ left: 12, right: 12, top: 12, bottom: 14 })
     }
     .width('100%')
+    .padding(10)
     .backgroundColor(CARD_BG)
-    .borderRadius(12)
+    .borderRadius(10)
+    .border({ width: 1, color: '#0DFFFFFF' })
     .clip(true)
   }
 
@@ -1487,7 +1579,7 @@ export struct LaunchView {
                 ForEach(this.pickedLaunches, (item: LaunchSummary) => {
                   LaunchCard({
                     item: item,
-                    live: this.isLive(item),
+                    // 列表卡不再挂倒计时（改回小程序的横向紧凑卡，倒计时只在「下次发射」大卡上）
                     onSelect: (picked: LaunchSummary) => {
                       this.openLaunch(picked);
                     }
@@ -1510,6 +1602,25 @@ export struct LaunchView {
       } else {
         this.statRow()
 
+        // 「下次发射」大卡：只挂在待发射分段、且确实挑得出来时。
+        // 小程序 index.vue 也是这个位置 —— stat 行下面、列表上面，
+        // 卡片自己带秒级倒计时，所以列表卡就完全不需要倒计时了。
+        if (this.activeTab === TAB_UPCOMING && this.nextItem.id.length > 0) {
+          NextLaunch({
+            item: this.nextItem,
+            more: true,
+            onSelect: (picked: LaunchSummary) => {
+              this.openLaunch(picked);
+            },
+            onMore: () => {
+              // 小程序这里切到发射列表底部（scrollTo 下一张），鸿蒙侧列表本来就在下面，
+              // 把顶部的筛选/分段让出来后直接滚到列表首项即可。
+              this.scroller.scrollToIndex(0);
+            }
+          })
+            .margin({ bottom: 10 })
+        }
+
         if (this.filteredList().length === 0) {
           // 空列表：要么还在等首屏（骨架），要么真的没有 —— 包括「筛完变空」
           if (this.loading) {
@@ -1523,7 +1634,7 @@ export struct LaunchView {
               ListItem() {
                 LaunchCard({
                   item: item,
-                  live: this.isLive(item),
+                  // 列表卡不再挂倒计时（改回小程序的横向紧凑卡，倒计时只在「下次发射」大卡上）
                   onSelect: (picked: LaunchSummary) => {
                     this.openLaunch(picked);
                   }
@@ -1550,7 +1661,8 @@ export struct LaunchView {
     }
     .width('100%')
     .height('100%')
-    .backgroundColor(BG_PRIMARY)
+    // ⚠ 这里不能设不透明背景：星空画在它下层，一旦盖上就整片看不见了。
+    // 底色统一由 build() 最外层 Stack 提供。
     .alignItems(HorizontalAlign.Start)
     // 左右 12vp 页面内边距 + 底部 120 胶囊让位（padding 直接缩内容区，
     // 列表最后一项能完整滚出来，不会被悬浮胶囊压住）
@@ -1560,14 +1672,24 @@ export struct LaunchView {
   build() {
     // 根从 Column 换成 Stack：两枚悬浮钮要浮在列表之上，且不能被列表裁剪。
     // Stack 内的子节点按 BottomEnd 对齐，主体自己撑满，悬浮层只占右下角。
-    Stack({ alignContent: Alignment.BottomEnd }) {
-      this.feedPage()
+    Stack({ alignContent: Alignment.TopStart }) {
+      // 1 星空底层。小程序 pages/index/index.vue 顶部就有 <star-field />，
+      //   我之前只给今日页和我的页铺了，发射页漏了 —— 这次补上。
+      //   必须作为 Stack 第一个子节点（绝对定位铺满、hitTestBehavior None）。
+      StarField()
 
-      Column({ space: FAB_GAP }) {
-        this.fabSearch()
-        this.fabStats()
+      // 2 主体（原来直接当 Stack 根用，现在多包一层对齐）
+      Stack({ alignContent: Alignment.BottomEnd }) {
+        this.feedPage()
+
+        Column({ space: FAB_GAP }) {
+          this.fabSearch()
+          this.fabStats()
+        }
+        .margin({ right: FAB_RIGHT, bottom: FAB_BOTTOM })
       }
-      .margin({ right: FAB_RIGHT, bottom: FAB_BOTTOM })
+      .width('100%')
+      .height('100%')
     }
     .width('100%')
     .height('100%')

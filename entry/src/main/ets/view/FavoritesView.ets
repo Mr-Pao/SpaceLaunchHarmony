@@ -165,7 +165,7 @@ export struct FavoritesView {
     Column() {
       LaunchCard({
         item: toSummary(fav),
-        live: false,
+        // 列表卡不再挂倒计时（同上）
         onSelect: (picked: LaunchSummary) => {
           const target: LaunchNavParam = new LaunchNavParam(picked.id, picked.net, fav.title);
           Nav.pushLaunch(target);
