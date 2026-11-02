@@ -223,7 +223,7 @@ export struct NextLaunch {
       // 宽度给死 168：Countdown 是 width('100%') 的四等分布局，
       // 不给容器宽度它会和 chip 抢满整行，把 chip 挤成竖排
       Column() {
-        Countdown({ net: strOf(this.item.net), size: 'md', showLabel: true })
+        Countdown({ net: strOf(this.item.net), sizeMode: 'md', showLabel: true })
       }
       .width(168)
       .alignItems(HorizontalAlign.End)
@@ -369,7 +369,7 @@ export struct NextLaunch {
     .backgroundColor('#141A26')
     .borderRadius(12) // 24rpx ÷ 2
     .border({ width: 1, color: '#2438BDF8' }) // 1rpx rgba(56,189,248,0.14)
-    .overflow(Overflow.Hidden)
+    .clip(true)
     .opacity(0.92) // 见文件头「有意差异 5」
     .onClick(() => {
       if (this.hasData()) {

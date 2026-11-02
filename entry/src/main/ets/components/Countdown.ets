@@ -41,7 +41,7 @@ export struct Countdown {
   /** 发射时刻，ISO 8601。父级可能先给空串、数据到位后再给真值 */
   @Prop @Watch('onNetChange') net: string = '';
   /** 尺寸档位：lg（默认，今日页大卡）/ md（卡片内嵌）/ sm（极小占位） */
-  @Prop size: string = 'lg';
+  @Prop sizeMode: string = 'lg';
   /** 是否显示 T- 前缀 */
   @Prop showLabel: boolean = true;
 
@@ -124,40 +124,40 @@ export struct Countdown {
   // ============ 尺寸档位（rpx ÷ 2） ============
 
   private numSize(): number {
-    if (this.size === 'sm') {
+    if (this.sizeMode === 'sm') {
       return 16;
     }
-    if (this.size === 'md') {
+    if (this.sizeMode === 'md') {
       return 22;
     }
     return 32; // 64rpx ÷ 2
   }
 
   private unitSize(): number {
-    if (this.size === 'sm') {
+    if (this.sizeMode === 'sm') {
       return 9;
     }
-    if (this.size === 'md') {
+    if (this.sizeMode === 'md') {
       return 10;
     }
     return 11; // 22rpx ÷ 2
   }
 
   private labelSize(): number {
-    if (this.size === 'sm') {
+    if (this.sizeMode === 'sm') {
       return 12;
     }
-    if (this.size === 'md') {
+    if (this.sizeMode === 'md') {
       return 15;
     }
     return 20; // 40rpx ÷ 2
   }
 
   private overSize(): number {
-    if (this.size === 'sm') {
+    if (this.sizeMode === 'sm') {
       return 13;
     }
-    if (this.size === 'md') {
+    if (this.sizeMode === 'md') {
       return 16;
     }
     return 22; // 44rpx ÷ 2
@@ -165,10 +165,10 @@ export struct Countdown {
 
   /** T- 前缀相对数字顶部的偏移：对位 .cd-lg .cd-t { margin-top: 12rpx } */
   private labelTop(): number {
-    if (this.size === 'sm') {
+    if (this.sizeMode === 'sm') {
       return 0;
     }
-    if (this.size === 'md') {
+    if (this.sizeMode === 'md') {
       return 2;
     }
     return 6;
@@ -204,7 +204,7 @@ export struct Countdown {
           .fontWeight(FontWeight.Bold)
           .fontColor('#38BDF8')
           .maxLines(1)
-          .margin({ right: this.size === 'sm' ? 2 : 4, top: this.labelTop() })
+          .margin({ right: this.sizeMode === 'sm' ? 2 : 4, top: this.labelTop() })
       }
 
       if (this.ended) {
