@@ -33,8 +33,8 @@ import { GalleryView } from '../view/GalleryView';
 import { RocketView } from '../view/RocketView';
 import { MineView } from '../view/MineView';
 import { FloatingTabBar } from '../components/FloatingTabBar';
-import { Nav, ROUTE_LAUNCH, ROUTE_PHOTO, ROUTE_ROCKET, ROUTE_ARTICLE, ROUTE_NEWSLIST, NAV_DETAIL_DEPTH_KEY } from '../routes/Nav';
-import { LaunchDetailPage, PhotoDetailPage, RocketDetailPage, ArticleDetailPage, NewsListPage } from '../routes/DetailPages';
+import { Nav, ROUTE_LAUNCH, ROUTE_PHOTO, ROUTE_ROCKET, ROUTE_ARTICLE, ROUTE_NEWSLIST, ROUTE_STATS, ROUTE_ASSETS, ROUTE_NEO, ROUTE_EVENTS, NAV_DETAIL_DEPTH_KEY } from '../routes/Nav';
+import { LaunchDetailPage, PhotoDetailPage, RocketDetailPage, ArticleDetailPage, NewsListPage, StatsPage, AssetsPage, NeoPage, EventsPage } from '../routes/DetailPages';
 import { LaunchNavParam, PhotoNavParam, RocketNavParam, ArticleNavParam } from '../routes/NavParam';
 
 @Entry
@@ -113,6 +113,14 @@ struct Index {
       ArticleDetailPage(name, param as ArticleNavParam)
     } else if (name === ROUTE_NEWSLIST) {
       NewsListPage(name)
+    } else if (name === ROUTE_STATS) {
+      StatsPage(name)
+    } else if (name === ROUTE_ASSETS) {
+      AssetsPage(name)
+    } else if (name === ROUTE_NEO) {
+      NeoPage(name)
+    } else if (name === ROUTE_EVENTS) {
+      EventsPage(name)
     }
   }
 

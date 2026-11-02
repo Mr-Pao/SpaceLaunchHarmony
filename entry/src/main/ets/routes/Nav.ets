@@ -24,6 +24,18 @@ export const ROUTE_ARTICLE: string = 'articleDetail';
 export const ROUTE_NEWSLIST: string = 'newsList';
 
 /**
+ * 「我的 → 探索」四个功能页的路由名。
+ *
+ * 这四页都不需要入参（数据全从 COS 拉、各按自己的数据集加载），
+ * 所以走同一个 pushBlank(name) 门面而不是各写一个 push。
+ * 对位小程序：pages/stats、pages/space-assets、pages/neo、pages/event。
+ */
+export const ROUTE_STATS: string = 'statsPage';
+export const ROUTE_ASSETS: string = 'assetsPage';
+export const ROUTE_NEO: string = 'neoPage';
+export const ROUTE_EVENTS: string = 'eventsPage';
+
+/**
  * 详情页层数写进 AppStorage 用的 key。
  * Index.ets 用 @StorageProp 订阅它，>0 时把底部悬浮胶囊整个摘掉。
  */
@@ -103,6 +115,21 @@ export class Nav {
       return;
     }
     stack.pushPathByName(ROUTE_NEWSLIST, null);
+  }
+
+  /**
+   * 跳到「我的 → 探索」里的无参页面。
+   *
+   * 四个功能页共用这一个门面：它们的入参只有「自己是谁」，
+   * 参数已经编码在 routeName 里，没有额外要传的业务数据。
+   * 传 null 而不是空对象 —— NavPathStack 对 null 有专门处理，空对象反而不合法。
+   */
+  static pushBlank(routeName: string): void {
+    const stack: NavPathStack | null = Nav.current;
+    if (stack === null) {
+      return;
+    }
+    stack.pushPathByName(routeName, null);
   }
 
   /** 返回上一页。栈为空时什么都不做（根页不能 pop） */

@@ -591,7 +591,7 @@ export struct RocketCard {
       Column()
         .width(13)
         .height(20)
-        .borderRadius({ topLeft: 7, topRight: 7 })
+        .borderRadius(7)
         .linearGradient({
           angle: 180,
           colors: [['#5B7FAE', 0.0], ['#2E4463', 1.0]]

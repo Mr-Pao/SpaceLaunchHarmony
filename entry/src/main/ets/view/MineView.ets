@@ -21,9 +21,8 @@
  *   2. 虚线提示卡换了文案：小程序写「在详情页点『☆ 收藏』或『提醒』」，而鸿蒙版详情页
  *      **还没有收藏/提醒按钮**，照抄就是骗用户去点一个不存在的东西。卡片、图标、
  *      边框、字号全部保持一致，只把「去哪点」改成诚实说法。
- *   3. 四宫格点击暂为 toast：目标页 pages/stats / space-assets / neo / events
- *      **在鸿蒙侧都还没实现**，硬跳会进白页。视觉照画（完整度重要），点击给
- *      「即将上线」提示，落地页做好后把 onTile() 换成 Nav.push 即可，布局不用动。
+ *   3. 四宫格点击跳到鸿蒙侧已实现的四个页面（StatsView / SpaceAssetsView /
+ *      NeoView / EventsView），由 Index.ets 的 PageMap 分发、共用 Nav.pushBlank。
  *
  * 为什么这一页也要星空：小程序「我的」页本来就有（与「今日」同款 160 颗星）。
  * 复用 components/StarField（不改它），按它文件头写的用法作为 Stack 第一个子节点。
@@ -43,6 +42,7 @@ import { fileStore } from '../data/FileStore';
 import { FILES, DATA_VERSION } from '../constants/Dataset';
 import { formatGeneratedAt } from '../utils/Format';
 import { StarField } from '../components/StarField';
+import { Nav, ROUTE_STATS, ROUTE_ASSETS, ROUTE_NEO, ROUTE_EVENTS } from '../routes/Nav';
 
 const DOMAIN: number = 0x0000;
 const TAG: string = 'MineView';
@@ -307,12 +307,23 @@ export struct MineView {
   /**
    * 四宫格点击。
    *
-   * 四个目标页在鸿蒙侧都没实现（小程序对应 pages/stats / space-assets / neo / events），
-   * 所以先给提示，不做假跳转。落地页做完后在这里按 key 分发 Nav.push 即可。
+   * 对位小程序 pages/stats / space-assets / neo / events 四页，
+   * 鸿蒙侧已各自实现为 view/StatsView、SpaceAssetsView、NeoView、EventsView，
+   * 由 Index.ets 的 PageMap 分发。四页都无入参，所以共用 Nav.pushBlank。
    */
   private onTile(key: string): void {
-    hilog.info(DOMAIN, TAG, '四宫格 %{public}s 目标页未实现', key);
-    this.toast('即将上线');
+    if (key === 'stats') {
+      Nav.pushBlank(ROUTE_STATS);
+    } else if (key === 'assets') {
+      Nav.pushBlank(ROUTE_ASSETS);
+    } else if (key === 'neo') {
+      Nav.pushBlank(ROUTE_NEO);
+    } else if (key === 'events') {
+      Nav.pushBlank(ROUTE_EVENTS);
+    } else {
+      // key 只在内部产生、四值穷举，走到这里说明 tiles 数组被改漏了一项
+      hilog.warn(DOMAIN, TAG, '四宫格出现未知 key: %{public}s', key);
+    }
   }
 
   /**

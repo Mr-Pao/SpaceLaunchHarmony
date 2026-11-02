@@ -20,6 +20,10 @@ import { PhotoDetailView } from '../view/PhotoDetailView';
 import { LaunchDetailView } from '../view/LaunchDetailView';
 import { ArticleDetailView } from '../view/ArticleDetailView';
 import { NewsListView } from '../view/NewsListView';
+import { StatsView } from '../view/StatsView';
+import { SpaceAssetsView } from '../view/SpaceAssetsView';
+import { NeoView } from '../view/NeoView';
+import { EventsView } from '../view/EventsView';
 
 const BG: string = '#0A0E17';
 const CARD: string = '#141A26';
@@ -159,6 +163,75 @@ export function ArticleDetailPage(name: string, param: ArticleNavParam) {
 export function NewsListPage(name: string) {
   NavDestination() {
     NewsListView()
+  }
+  .hideTitleBar(true)
+  .backgroundColor(BG)
+  .onShown(() => {
+    Nav.markDetailShown();
+  })
+  .onHidden(() => {
+    Nav.markDetailHidden();
+  })
+}
+
+/**
+ * 「我的 → 探索」四个功能页。
+ *
+ * 这四个都**无入参**、各自从 COS 拉自己的数据集，所以共用一个模板式写法：
+ * NavDestination + 对应 View + onShown/onHidden 计数。
+ *
+ * 为什么每个都要写 onShown/onHidden：
+ *   漏一个，从那一页进入时 detailDepth 不涨，底部悬浮胶囊会浮在内容上（实测过）。
+ */
+@Builder
+export function StatsPage(name: string) {
+  NavDestination() {
+    StatsView()
+  }
+  .hideTitleBar(true)
+  .backgroundColor(BG)
+  .onShown(() => {
+    Nav.markDetailShown();
+  })
+  .onHidden(() => {
+    Nav.markDetailHidden();
+  })
+}
+
+@Builder
+export function AssetsPage(name: string) {
+  NavDestination() {
+    SpaceAssetsView()
+  }
+  .hideTitleBar(true)
+  .backgroundColor(BG)
+  .onShown(() => {
+    Nav.markDetailShown();
+  })
+  .onHidden(() => {
+    Nav.markDetailHidden();
+  })
+}
+
+@Builder
+export function NeoPage(name: string) {
+  NavDestination() {
+    NeoView()
+  }
+  .hideTitleBar(true)
+  .backgroundColor(BG)
+  .onShown(() => {
+    Nav.markDetailShown();
+  })
+  .onHidden(() => {
+    Nav.markDetailHidden();
+  })
+}
+
+@Builder
+export function EventsPage(name: string) {
+  NavDestination() {
+    EventsView()
   }
   .hideTitleBar(true)
   .backgroundColor(BG)
