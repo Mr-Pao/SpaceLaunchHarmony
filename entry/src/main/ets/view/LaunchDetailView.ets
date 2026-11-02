@@ -19,9 +19,11 @@
  *   1. **不做「历史归档分片」反查**。小程序 findById 找不到会去 previous 的分片里翻，
  *      鸿蒙侧的 Repository 只有 chunk('gallery' | 'satellites')，没有发射归档分片，
  *      拿不到就老老实实显示「未找到该发射任务」，不假装加载中。
- *   2. **不铺时间线卡**。任务书的功能清单里没有「发射周期」，timelines 数据虽已核实
- *      结构（list[{id,name,net,at,items[{a,d,t,az,z}],craft}]、t 是 ISO8601 时长），
- *      但没在这版需求里，留着下一轮加，避免一次改太多。
+ *   2. **「发射周期」只查缓存、绝不主动 load**。timelines 是「一次发射一条」的大对象
+ *      （items 几十条、还带 craft 的整段结构），而详情页绝大多数用户不看它；
+ *      为一条发射把整份 timelines.json 拉下来，等于用首屏流量换一张可看可不看的卡。
+ *      所以只 repo.findById('timelines', id)：缓存命中就画，不命中整卡不显示。
+ *      代价是首次进入（缓存里还没有 timelines）看不到这张卡 —— 认为可以接受。
  *   3. **「相关报道」行不可点**。资讯详情页（ROUTE_ARTICLE）还没在 Index.ets 的
  *      PageMap 里注册，硬点会 push 一个不存在的页面，所以只展示不可跳。
  *   4. **任务详情卡的显示条件是「描述或轨道或类型至少有一个」**。任务书说「描述为空
@@ -58,11 +60,12 @@ import {
   statusOf,
   statusToneColor,
   statusToneBg,
-  orbitLabelOf
+  orbitLabelOf,
+  rocketLabelOf
 } from '../utils/Format';
 import { Countdown } from '../components/Countdown';
 import { Nav } from '../routes/Nav';
-import { LaunchNavParam, RocketNavParam } from '../routes/NavParam';
+import { LaunchNavParam, PhotoNavParam, RocketNavParam } from '../routes/NavParam';
 
 const DOMAIN: number = 0x0000;
 const TAG: string = 'LaunchDetailView';
@@ -265,6 +268,162 @@ class LdCellRow {
   }
 }
 
+// ============ 发射周期：类型与时长格式化 ============
+//
+// 为什么要本文件自建类型：工程 model/ 下没有 TimelineItem（grep 只命中 Dataset.ets 里的
+// 数据集键名 'timelines'）。这里的数据只为这一张卡服务，为它单开一个 model 文件不值当，
+// 所以定义在文件内。名字统一加 Ld 前缀 —— 与已有的 LdCell / LdCellRow 同族，
+// 也避免将来 model/Common.ets 里补上同名类型时被 ArkTS 当成声明合并。
+
+/**
+ * timelines 里的一个事件。
+ *
+ * 字段名是 CI 产物里的最短口径（scripts/timeline.js 的 slim 只留 a/d/t），
+ * 与小程序 utils/timeline.js 消费的字段完全一致：
+ *   a = 事件名、d = 描述、t = ISO8601 时长串（不是秒数！）。
+ * az / z 是 LL2 的方位角与天顶角，本卡不展示，只保留声明免得将来丢字段。
+ */
+interface LdTimelineEvent {
+  a?: string;
+  d?: string;
+  t?: string;
+  az?: number | null;
+  z?: number | null;
+}
+
+/** timelines 的一条记录：一次发射对应一份 items 时间表 */
+interface LdTimelineItem {
+  id?: string;
+  name?: string;
+  net?: string;
+  items?: LdTimelineEvent[];
+}
+
+/** 渲染用的一行：把 'a/d/t' 预先算成"给 Text 直接用的字符串" */
+class LdTimelineRow {
+  /** 左侧时间标签，如 T-38 分 / T+2 时 48 分 / T-0 */
+  tag: string = '';
+  name: string = '';
+  desc: string = '';
+  /** 排序用的秒数（负=发射前），不参与展示 */
+  sec: number = 0;
+
+  constructor(tag: string, name: string, desc: string, sec: number) {
+    this.tag = tag;
+    this.name = name;
+    this.desc = desc;
+    this.sec = sec;
+  }
+}
+
+/** 时间线最多画 12 条：再多用户也不会读，卡会变成一屏滚动条 */
+const LD_TIMELINE_SHOW: number = 12;
+
+/**
+ * 解析 ISO 8601 时长串，返回「秒」，发射前为负。
+ *
+ * 为什么手写扫描而不用正则：ArkTS 对 RegExpMatchArray 的下标访问很挑剔
+ * （Media.ets 里为此专门加了注释），而时长串最多十几个字符，逐字符扫更稳，
+ * 也不用担心正则字符串里的反斜杠要转义几层。
+ *
+ * 支持的口径就是 LL2 实际会给出的那些：-PT38M / PT45S / PT2H48M28S / P0D / P1DT2H。
+ * 解析不了（空串 / 格式不认识）一律返回 0，由调用方显示 T-0 —— 宁可显示"零时刻"，
+ * 也不要出现 NaN 或 "T- 分"这种残句。
+ */
+function ldDurationSec(raw: string): number {
+  const s: string = strOf(raw).trim();
+  if (s.length === 0) {
+    return 0;
+  }
+  let i: number = 0;
+  let sign: number = 1;
+  if (s.charAt(0) === '-') {
+    sign = -1;
+    i = 1;
+  } else if (s.charAt(0) === '+') {
+    i = 1;
+  }
+  if (s.charAt(i) !== 'P') {
+    return 0;
+  }
+  i = i + 1;
+
+  let days: number = 0;
+  let hours: number = 0;
+  let mins: number = 0;
+  let secs: number = 0;
+  let num: string = '';
+  while (i < s.length) {
+    const c: string = s.charAt(i);
+    // T 只是「日期部分到此为止」的分隔符，跳过即可（P1DT2H 里它没有数值含义）
+    if (c === 'T') {
+      num = '';
+      i = i + 1;
+      continue;
+    }
+    // 数字 / 小数点用 charCodeAt 判，不用 '0' <= c && c <= '9'：
+    // ArkTS 对字符串的大小比较运算符支持有限，数值比较稳（工程内 Format.ets 同写法）
+    const code: number = s.charCodeAt(i);
+    const isDigit: boolean = code >= 48 && code <= 57;
+    if (isDigit || code === 46) {
+      num = num + c;
+      i = i + 1;
+      continue;
+    }
+    const v: number = num.length > 0 ? Number(num) : 0;
+    if (c === 'D') {
+      days = v;
+    } else if (c === 'H') {
+      hours = v;
+    } else if (c === 'M') {
+      mins = v;
+    } else if (c === 'S') {
+      secs = v;
+    }
+    // 不认识的单位（W / Y 之类）也把 num 清掉，避免下一个单位吃掉两个数
+    num = '';
+    i = i + 1;
+  }
+
+  const total: number = days * 86400 + hours * 3600 + mins * 60 + secs;
+  return sign * total;
+}
+
+/**
+ * 秒数 → 中文相对时刻。
+ *
+ * 口径照抄小程序 utils/timeline.js 的 tlRelative：
+ *   有天数 → "T-2 天 3 时"；有小时 → "T+2 时 48 分"；有分钟 → "T-38 分"；否则 "T+45 秒"。
+ * 0 单独处理成 "T-0"（P0D 就是起飞时刻，小程序里同样写 T-0）。
+ * 前缀的正负看总秒数，不看原始串：-PT0S 这种写法归到 T-0，不出现 "T-"。
+ */
+function ldTimelineTag(sec: number): string {
+  if (sec === 0) {
+    return 'T-0';
+  }
+  const pre: string = sec < 0 ? 'T-' : 'T+';
+  let left: number = Math.abs(sec);
+  const d: number = Math.floor(left / 86400);
+  left = left - d * 86400;
+  const h: number = Math.floor(left / 3600);
+  left = left - h * 3600;
+  const m: number = Math.floor(left / 60);
+  const s: number = Math.round(left - m * 60);
+
+  // 数字一律 String() 再拼：ArkTS 里 string + number 的隐式转换不可靠，
+  // 显式转一次既稳又不用想类型推导
+  if (d > 0) {
+    return h > 0 ? pre + String(d) + ' 天 ' + String(h) + ' 时' : pre + String(d) + ' 天';
+  }
+  if (h > 0) {
+    return m > 0 ? pre + String(h) + ' 时 ' + String(m) + ' 分' : pre + String(h) + ' 时';
+  }
+  if (m > 0) {
+    return pre + String(m) + ' 分';
+  }
+  return pre + String(s) + ' 秒';
+}
+
 @Component
 export struct LaunchDetailView {
   /** 路由入参（id / net / title）。@Prop 深拷贝，页面内部不修改它 */
@@ -289,11 +448,30 @@ export struct LaunchDetailView {
   @State imgErr: boolean = false;
   @State rocketImgErr: boolean = false;
   @State mapErr: boolean = false;
+  /** 任务信息图破图：竖版长图本来就大，加载失败还留个空框很难看 → 整卡不显示 */
+  @State infoErr: boolean = false;
+
+  /**
+   * 发射周期（只读缓存，不主动 load）。
+   * 用 @State 而不是每次 build 现算：解析 ISO 时长 + 排序是 O(n) 的活，
+   * 放进 build 会在每次无关的状态变化（展开描述、破图标记）里重跑一遍。
+   */
+  @State tlRows: LdTimelineRow[] = [];
+  /** 时间线原始条数（>12 时卡片底部显示「共 N 条」） */
+  @State tlTotal: number = 0;
+
+  /** 已经解析过时间线的发射 id；同一条发射不重复解析 */
+  private tlIdCache: string = '';
 
   /** 还在跑的后台请求数（两份快照），归零才收 loading */
   private pending: number = 0;
   /** 报道只拉一次（onUpdate / settle 都可能触发） */
   private newsStarted: boolean = false;
+  /**
+   * 上一次落地时信息图的地址。用途只有一个：刷新后地址没变就别清破图标记，
+   * 否则同一张坏图会在每次后台刷新时重新请求、重新闪一下空框。
+   */
+  private infoSrcCache: string = '';
   private scroller: Scroller = new Scroller();
 
   // ============ 生命周期 ============
@@ -383,6 +561,70 @@ export struct LaunchDetailView {
     this.item = hit;
     this.found = true;
     this.loading = false;
+
+    // 信息图换了地址才重置破图标记：同一张坏图反复重试只会让卡片闪一下空框
+    const info: string = strOf(hit.infographic).trim();
+    if (info !== this.infoSrcCache) {
+      this.infoSrcCache = info;
+      this.infoErr = false;
+    }
+
+    this.loadTimeline();
+  }
+
+  /**
+   * 发射周期：只从缓存里按 id 取，**不 load**。
+   *
+   * 取舍写在文件头第 2 条。这里补一句实现细节：findById 命中不了有两种情况
+   * （缓存里根本没 timelines、或有 timelines 但没有这条发射），两者都表现为
+   * 空数组 → 整卡不显示，用户看到的就是「这页没有发射周期」，
+   * 不会出现转圈或「暂无数据」这种半吊子状态。
+   */
+  private loadTimeline(): void {
+    const id: string = this.idText();
+    if (id.length === 0) {
+      this.tlRows = [];
+      this.tlTotal = 0;
+      return;
+    }
+    if (this.tlIdCache === id) {
+      // 同一条发射已经解析过，后台刷新不必重算（timeline 一天内基本不变）
+      return;
+    }
+
+    const hit: LdTimelineItem | null = repo.findById<LdTimelineItem>('timelines', id);
+    if (hit === null) {
+      this.tlRows = [];
+      this.tlTotal = 0;
+      return;
+    }
+
+    const raw: LdTimelineEvent[] | undefined = hit.items;
+    if (raw === undefined || raw.length === 0) {
+      this.tlRows = [];
+      this.tlTotal = 0;
+      return;
+    }
+
+    const all: LdTimelineRow[] = [];
+    for (let i = 0; i < raw.length; i++) {
+      const e: LdTimelineEvent = raw[i];
+      const name: string = strOf(e.a).trim();
+      if (name.length === 0) {
+        // 没事件名的条目画出来就是一个孤零零的时间，没有信息量
+        continue;
+      }
+      const sec: number = ldDurationSec(strOf(e.t));
+      all.push(new LdTimelineRow(ldTimelineTag(sec), name, strOf(e.d).trim(), sec));
+    }
+
+    // 升序：T-2 天 → T-0 → T+10 分。数据源本身多半已排好，但 CI 合并多条来源后
+    // 顺序不保证，自己排一次才敢说「从上往下就是时间顺序」。
+    all.sort((a: LdTimelineRow, b: LdTimelineRow) => a.sec - b.sec);
+
+    this.tlTotal = all.length;
+    this.tlRows = all.length > LD_TIMELINE_SHOW ? all.slice(0, LD_TIMELINE_SHOW) : all;
+    this.tlIdCache = id;
   }
 
   /** 一路收尾：两个后台请求都结束才关 loading */
@@ -584,8 +826,20 @@ export struct LaunchDetailView {
     return rb;
   }
 
-  /** 火箭名：rocketBrief.name 优先，回退 LL2 的 rocket.configuration.name */
+  /**
+   * 火箭名。**口径必须与列表页一致**：先 rocketLabelOf（走 Format 的中文名表 +
+   * 构型后缀推导），再回退 rocketBrief.name，最后 rocket.configuration.name。
+   *
+   * 为什么不是「rocketBrief.name 优先」：rocketBrief 的 name 是 LL2 英文原名，
+   * 列表页（LaunchCard / LaunchView）显示的是 rocketLabelOf 的「猎鹰 9 号 Block 5」；
+   * 两处口径不一致时，用户点进来会以为换了型号。中文名缺失时 rocketLabelOf 自己
+   * 会回退英文原文，所以它放第一位不会造成"没名字"。
+   */
   private rocketName(): string {
+    const label: string = strOf(rocketLabelOf(this.item));
+    if (label.length > 0) {
+      return label;
+    }
     const rb: RocketBrief | null = this.rocketBrief();
     if (rb !== null) {
       const n: string = strOf(rb.name);
@@ -600,6 +854,46 @@ export struct LaunchDetailView {
     return strOf(r.configuration.name);
   }
 
+  /**
+   * 参数行：高度 · 直径 · LEO 运力 · 级数，缺哪段跳过哪段。
+   *
+   * 字段名以 model/Common.ets 的 RocketBrief 为准：length（不是 height）、
+   * diameter、leo_capacity、max_stage。写成 height 会直接编译不过。
+   */
+  private rocketParamText(): string {
+    const rb: RocketBrief | null = this.rocketBrief();
+    if (rb === null) {
+      return '';
+    }
+    const parts: string[] = [];
+    if (ldHas(rb.length)) {
+      parts.push('高 ' + String(ldRound1(ldNum(rb.length))) + ' 米');
+    }
+    if (ldHas(rb.diameter)) {
+      parts.push('直径 ' + String(ldRound1(ldNum(rb.diameter))) + ' 米');
+    }
+    if (ldHas(rb.leo_capacity)) {
+      parts.push('LEO ' + ldMassText(rb.leo_capacity));
+    }
+    if (ldHas(rb.max_stage)) {
+      parts.push(String(Math.round(ldNum(rb.max_stage))) + ' 级');
+    }
+    let out: string = '';
+    for (let i = 0; i < parts.length; i++) {
+      if (i > 0) {
+        out = out + ' · ';
+      }
+      out = out + parts[i];
+    }
+    return out;
+  }
+
+  /**
+   * 火箭缩略图。只有 rocketBrief.image 一条来源 ——
+   * 任务书里写的「或 rocket.image」在本工程不存在：LaunchRocket 只有
+   * configuration（id / name / full_name / variant / families），没有 image 字段。
+   * 所以拿不到就返回空串，卡片侧据此整张图不画（不留灰块）。
+   */
   private rocketImage(): string {
     const rb: RocketBrief | null = this.rocketBrief();
     if (rb === null) {
@@ -616,7 +910,10 @@ export struct LaunchDetailView {
     return strOf(rb.desc);
   }
 
-  /** 小标签：可复用 / 级数。都是「有才显示」，不占位 */
+  /**
+   * 小标签。只留「可复用」——级数已经在 rocketParamText() 的参数行里出现过，
+   * 同一张卡上「4 级」写两遍（参数行 + chip）纯属重复。
+   */
   private rocketFlags(): string[] {
     const out: string[] = [];
     const rb: RocketBrief | null = this.rocketBrief();
@@ -626,39 +923,14 @@ export struct LaunchDetailView {
     if (rb.reusable === true) {
       out.push('可复用');
     }
-    if (ldHas(rb.max_stage)) {
-      out.push(String(Math.round(ldNum(rb.max_stage))) + ' 级');
-    }
     return out;
   }
 
-  /** 六格技术参数；值为 0 / 空 / undefined 的格整格跳过 */
-  private rocketSpecs(): LdCell[] {
-    const out: LdCell[] = [];
-    const rb: RocketBrief | null = this.rocketBrief();
-    if (rb === null) {
-      return out;
-    }
-    if (ldHas(rb.to_thrust)) {
-      out.push(new LdCell('起飞推力', ldNumText(ldNum(rb.to_thrust)) + ' 千牛'));
-    }
-    if (ldHas(rb.length)) {
-      out.push(new LdCell('长度', String(ldRound1(ldNum(rb.length))) + ' 米'));
-    }
-    if (ldHas(rb.diameter)) {
-      out.push(new LdCell('直径', String(ldRound1(ldNum(rb.diameter))) + ' 米'));
-    }
-    if (ldHas(rb.max_stage)) {
-      out.push(new LdCell('级数', String(Math.round(ldNum(rb.max_stage))) + ' 级'));
-    }
-    if (ldHas(rb.leo_capacity)) {
-      out.push(new LdCell('LEO 运力', ldMassText(rb.leo_capacity)));
-    }
-    if (ldHas(rb.gto_capacity)) {
-      out.push(new LdCell('GTO 运力', ldMassText(rb.gto_capacity)));
-    }
-    return out;
-  }
+  // 原本这里还有一个 rocketSpecs()（六格：推力 / 长度 / 直径 / 级数 / LEO / GTO）。
+  // 火箭卡改成「一行参数 + 两行简介」之后，长度 / 直径 / 级数 / LEO 四项与
+  // rocketParamText() 完全重复，六格再画一遍等于同一组数字出现两次；
+  // 剩下的推力与 GTO 点进火箭详情页就能看到。故整段删除，不保留死代码。
+  // cellGrid() 仍被统计概览卡（countCells）使用，不能动。
 
   /** 一行小字：起飞质量 · 单次造价 · 首飞 */
   private rocketMeta(): string {
@@ -667,9 +939,13 @@ export struct LaunchDetailView {
       return '';
     }
     const parts: string[] = [];
-    const mass: string = ldMassText(rb.launch_mass);
-    if (mass.length > 0) {
-      parts.push('起飞质量 ' + mass);
+    // launch_mass 本身单位就是吨（slim.js:355 注释「起飞质量单位是吨」），
+    // 不能走 ldMassText —— 那是给 kg 用的，549 吨会被判成 "549 kg" 少写三位。
+    // 与小程序 launch-content.vue:449 一致：只保留一位小数、整数不显示 .0。
+    const massNum: number = ldNum(rb.launch_mass);
+    if (massNum > 0) {
+      const mt: number = Math.round(massNum * 10) / 10;
+      parts.push('起飞质量 ' + (mt === Math.round(mt) ? String(Math.round(mt)) : String(mt)) + ' 吨');
     }
     const cost: string = ldCostText(rb.launch_cost);
     if (cost.length > 0) {
@@ -927,6 +1203,16 @@ export struct LaunchDetailView {
     .width('100%')
   }
 
+  /** 任务信息图地址（可能为空串，调用方自己判空） */
+  private infoSrc(): string {
+    return strOf(this.item.infographic).trim();
+  }
+
+  /** 信息图整卡是否显示：有地址、且没加载失败过 */
+  private hasInfo(): boolean {
+    return this.infoSrc().length > 0 && !this.infoErr;
+  }
+
   private imageSrc(): string {
     return strOf(this.item.image);
   }
@@ -1132,20 +1418,123 @@ export struct LaunchDetailView {
     .margin({ top: CARD_GAP })
   }
 
+  // ============ UI：任务信息图 ============
+
+  /**
+   * 任务信息图是竖版长图（小程序用 mode="widthFix"，即宽度撑满、高度按原图比例）。
+   * Image 不设 height 时 ArkUI 就按 intrinsic 比例自适应，所以这里只给 width，
+   * 外层再包一个 width('100%') 的容器 —— 长图在滚动容器里不能设固定高度，
+   * 否则要么压扁要么裁掉。
+   */
+  @Builder
+  infoCard() {
+    Column() {
+      this.cardTitle('任务信息图')
+
+      Column() {
+        Image(this.infoSrc())
+          .width('100%')
+          .objectFit(ImageFit.Contain)
+          .borderRadius(10)
+          .onError(() => {
+            // 破图不留在页面上占一大块空白：整卡直接不显示
+            this.infoErr = true;
+          })
+      }
+      .width('100%')
+      .margin({ top: 10 })
+      .onClick(() => {
+        Nav.pushPhoto(new PhotoNavParam(this.infoSrc(), '任务信息图'));
+      })
+    }
+    .width('100%')
+    .alignItems(HorizontalAlign.Start)
+    .padding(CARD_PAD)
+    .backgroundColor(CARD_BG)
+    .borderRadius(CARD_RADIUS)
+    .margin({ top: CARD_GAP })
+  }
+
+  // ============ UI：发射周期 ============
+
+  @Builder
+  timelineCard() {
+    Column() {
+      Row() {
+        this.cardTitle('发射周期')
+        Blank()
+        Text('T- 起飞前 / T+ 起飞后')
+          .fontSize(11)
+          .fontColor(TEXT_DIM)
+      }
+      .width('100%')
+      .alignItems(VerticalAlign.Center)
+
+      ForEach(this.tlRows, (row: LdTimelineRow, idx: number) => {
+        Row() {
+          // 时间标签定宽右对齐：左边参差不齐的话整列会像锯齿
+          Text(row.tag)
+            .fontSize(12)
+            .fontColor(ACCENT)
+            .width(84)
+            .textAlign(TextAlign.End)
+
+          Column() {
+            Text(row.name)
+              .fontSize(14)
+              .fontColor(TEXT_MAIN)
+              .width('100%')
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+            if (row.desc.length > 0) {
+              Text(row.desc)
+                .fontSize(12)
+                .fontColor(TEXT_SUB)
+                .width('100%')
+                .maxLines(2)
+                .textOverflow({ overflow: TextOverflow.Ellipsis })
+                .margin({ top: 2 })
+            }
+          }
+          .layoutWeight(1)
+          .alignItems(HorizontalAlign.Start)
+          .margin({ left: 12 })
+        }
+        .width('100%')
+        .alignItems(VerticalAlign.Top)
+        .margin({ top: 10 })
+      }, (row: LdTimelineRow, idx: number) => String(idx) + row.tag + row.name)
+
+      // 只画前 12 条，剩下的用一行字数交代清楚，别让用户以为数据丢了
+      if (this.tlTotal > this.tlRows.length) {
+        Text('共 ' + String(this.tlTotal) + ' 条')
+          .fontSize(11)
+          .fontColor(TEXT_DIM)
+          .width('100%')
+          .margin({ top: 10 })
+      }
+    }
+    .width('100%')
+    .alignItems(HorizontalAlign.Start)
+    .padding(CARD_PAD)
+    .backgroundColor(CARD_BG)
+    .borderRadius(CARD_RADIUS)
+    .margin({ top: CARD_GAP })
+  }
+
   // ============ UI：火箭 ============
 
   @Builder
   rocketCard() {
     Column() {
       Row() {
-        Text('运载火箭')
-          .fontSize(15)
-          .fontWeight(FontWeight.Bold)
-          .fontColor(TEXT_MAIN)
+        this.cardTitle('运载火箭')
         Blank()
-        Text('详情 ›')
-          .fontSize(11)
-          .fontColor(ACCENT)
+        // 卡片整体可点，这里只是给一个「可点」的视觉暗示
+        Text('›')
+          .fontSize(16)
+          .fontColor(TEXT_DIM)
       }
       .width('100%')
       .alignItems(VerticalAlign.Center)
@@ -1153,8 +1542,8 @@ export struct LaunchDetailView {
       Row() {
         if (this.rocketImage().length > 0 && !this.rocketImgErr) {
           Image(this.rocketImage())
-            .width(64)
-            .height(64)
+            .width(48)
+            .height(48)
             .objectFit(ImageFit.Cover)
             .backgroundColor(MEDIA_BG)
             .borderRadius(8)
@@ -1165,22 +1554,22 @@ export struct LaunchDetailView {
 
         Column() {
           Text(this.rocketName())
-            .fontSize(15)
+            .fontSize(14)
             .fontWeight(FontWeight.Medium)
             .fontColor(TEXT_MAIN)
             .maxLines(2)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
             .width('100%')
 
-          if (this.rocketFlags().length > 0) {
-            // 同上：chip 可能折行，用 Flex(wrap)；宽度跟随父 Column，不抢整行
-            Flex({ wrap: FlexWrap.Wrap, alignItems: ItemAlign.Center }) {
-              ForEach(this.rocketFlags(), (flag: string) => {
-                this.chip(flag, false)
-              }, (flag: string) => flag)
-            }
-            .width('100%')
-            .margin({ top: 4 })
+          // 高度 · 直径 · LEO 运力 · 级数，缺哪段跳哪段
+          if (this.rocketParamText().length > 0) {
+            Text(this.rocketParamText())
+              .fontSize(14)
+              .fontColor(TEXT_DIM)
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+              .width('100%')
+              .margin({ top: 4 })
           }
         }
         .layoutWeight(1)
@@ -1192,24 +1581,30 @@ export struct LaunchDetailView {
       .alignItems(VerticalAlign.Top)
       .margin({ top: 10 })
 
+      // desc 紧跟参数行（任务书要求「在参数行下面显示两行摘要」）
       if (this.rocketDesc().length > 0) {
         Text(this.rocketDesc())
-          .fontSize(12.5)
+          .fontSize(12)
           .fontColor(TEXT_SUB)
-          .lineHeight(19)
+          .lineHeight(18)
           .width('100%')
-          .maxLines(3)
+          .maxLines(2)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
-          .margin({ top: 10 })
+          .margin({ top: 8 })
       }
 
-      if (this.rocketSpecs().length > 0) {
-        Divider()
-          .color(DIVIDER)
-          .margin({ top: 10, bottom: 4 })
-        this.cellGrid(this.rocketSpecs())
+      if (this.rocketFlags().length > 0) {
+        // chip 可能折行，用 Flex(wrap)；Row 没有 flexWrap
+        Flex({ wrap: FlexWrap.Wrap, alignItems: ItemAlign.Center }) {
+          ForEach(this.rocketFlags(), (flag: string) => {
+            this.chip(flag, false)
+          }, (flag: string) => flag)
+        }
+        .width('100%')
+        .margin({ top: 4 })
       }
 
+      // 起飞质量 · 单次造价 · 首飞：和上面那行参数不重复，留着
       if (this.rocketMeta().length > 0) {
         Text(this.rocketMeta())
           .fontSize(11)
@@ -1596,12 +1991,20 @@ export struct LaunchDetailView {
               if (this.isUpcoming()) {
                 this.countdownCard()
               }
+              // 发射周期紧跟倒计时：发射前它是这页最有用的一块（下一步做什么、还有多久）
+              if (this.tlRows.length > 0) {
+                this.timelineCard()
+              }
               this.whenCard()
               if (this.hasMission()) {
                 this.missionCard()
               }
-              // rocketBrief 为 null 时整卡不显示（绝不渲染 "undefined"）
-              if (this.rocketBrief() !== null) {
+              // 任务信息图是竖版长图，放在任务详情之后，当「长文配图」看
+              if (this.hasInfo()) {
+                this.infoCard()
+              }
+              // 只要拿得到火箭名就画卡（rocketBrief 缺失时还有 rocket.configuration 兜底）
+              if (this.rocketName().length > 0) {
                 this.rocketCard()
               }
               if (this.hasCondition()) {

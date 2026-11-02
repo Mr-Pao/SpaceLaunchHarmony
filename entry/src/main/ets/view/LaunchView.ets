@@ -3,10 +3,13 @@
  *
  * 对位小程序 pages/index/index.vue（967 行）。那一页实际包含：
  *   日历条 + 筛选（机构/年份/状态）+ 分段（待发射/已发射）+ 统计行 + 分页列表 + 触底加载
- * 本文件先做**任务书要求的四件必做项**：
+ * 本文件覆盖：
  *   ① 待发射 / 已发射 分段切换   ② 统计行
  *   ③ 列表卡片（components/LaunchCard.ets）  ④ 触底加载 upcomingMore
- * 日历条与筛选面板留在下一阶段（需要新的交互组件与筛选状态机，不适合塞进本次改动）。
+ *   ⑤ 搜索 + 三维筛选（国家 / 机构 / 火箭）底部抽屉   ⑥ 右下角搜索 / 统计悬浮钮
+ *
+ * 筛选候选只从**当前 feed 已加载的条目**里现算：数据是渐进加载的，候选跟着列表
+ * 一起长，用户不会遇到「选了必然 0 条」的死选项。
  *
  * ── 结构（自上而下）──
  *   页头「发射」19vp Bold + 11vp 灰副标题（与 TodayView.dateRow 同档）
@@ -24,8 +27,9 @@
  *      不用先滚回顶部。信息层级没变，只是把控件从滚动流里抬了出来。
  *   4. **只做一段 more**。upcomingMore 是一个静态文件，不是游标分页，
  *      所以加载成功一次即 moreDone，不做「无限滚动」的假象。
- *   5. **不做筛选**（机构/年份/状态），故小程序里 `hasFilter ? '筛选出 N 条'` 那一支
- *      在这里恒不成立，副文改成「已载入 x / 总数 + 数据更新时间」。
+ *   5. **筛选只保留国家 / 机构 / 火箭三维**（对位小程序 FILTER_KEYS 的三个键）。
+ *      年份、轨道上线后几乎没人点，白占面板高度。抽屉里 chips 立即生效，
+ *      不做「草稿 + 确定」，底部按钮实时回显「查看 N 个结果」。
  *
  * ⚠ 本文件不使用 console.*，日志一律 hilog。
  */
@@ -37,12 +41,14 @@ import { LaunchSummary, UpcomingPayload, PreviousPayload, UpcomingMorePayload } 
 // LaunchStatus / LaunchMission 只为给局部变量补显式类型 —— ArkTS 严格模式下
 // `const x = obj.prop` 的属性访问推断在可选链上容易收窄成 undefined 联合，
 // 显式标注比事后排查便宜
-import { LaunchStatus, LaunchMission } from '../model/Common';
+import { LaunchStatus, LaunchMission, LaunchProvider, LaunchRocket, RocketConfig } from '../model/Common';
 import { LaunchCard } from '../components/LaunchCard';
 import { LaunchCalendar } from '../components/LaunchCalendar';
-import { Nav } from '../routes/Nav';
+import { Nav, ROUTE_STATS } from '../routes/Nav';
 import { LaunchNavParam } from '../routes/NavParam';
-import { strOf, parseTime, formatGeneratedAt } from '../utils/Format';
+import {
+  strOf, parseTime, formatGeneratedAt, countryOf, providerLabelOf, rocketLabelOf, placeLabelOf
+} from '../utils/Format';
 
 const DOMAIN: number = 0x0000;
 const TAG: string = 'LaunchView';
@@ -94,6 +100,59 @@ const LIVE_WINDOW_MS: number = 72 * 3600 * 1000;
  */
 const SKELETON_SLOTS: number[] = [0, 1, 2];
 
+/**
+ * 三个筛选维度的键。
+ * 与小程序 `FILTER_KEYS`（index.vue:194）逐字对齐 —— 键名同时是「已选值」的
+ * 存放位置，改字符串等于改协议，所以集中在这里而不是散在 build 里。
+ */
+const FILT_COUNTRY: string = 'country';
+const FILT_AGENCY: string = 'agency';
+const FILT_ROCKET: string = 'rocket';
+
+/** 每个维度最多给多少个候选（对位 OPT_LIMIT，index.vue:196） */
+const OPT_LIMIT_COUNTRY: number = 20;
+const OPT_LIMIT_AGENCY: number = 24;
+const OPT_LIMIT_ROCKET: number = 24;
+
+/** 悬浮圆钮直径 / 右边距 / 底部让位（胶囊 58 + margin 20 + 自身间隙） */
+const FAB_SIZE: number = 48;
+const FAB_RIGHT: number = 16;
+const FAB_BOTTOM: number = 92 + 12;
+const FAB_GAP: number = 12;
+/** 面板与按钮的强调色（任务书视觉规范） */
+const ACCENT: string = '#38BDF8';
+
+/**
+ * 筛选候选项。
+ *
+ * 用 class 而不是 interface：面板 chips 要 `new` 出来塞进数组，
+ * ArkTS 禁无类型对象字面量，interface 无法实例化。
+ */
+class FiltOption {
+  value: string = '';
+  label: string = '';
+  count: number = 0;
+
+  constructor(value: string, label: string, count: number) {
+    this.value = value;
+    this.label = label;
+    this.count = count;
+  }
+}
+
+/** 一个筛选维度：key 用于回写状态，label 是段标题，options 是按出现次数降序的前 N 个 */
+class FiltGroup {
+  key: string = '';
+  label: string = '';
+  options: FiltOption[] = [];
+
+  constructor(key: string, label: string, options: FiltOption[]) {
+    this.key = key;
+    this.label = label;
+    this.options = options;
+  }
+}
+
 @Component
 export struct LaunchView {
   // ============ 状态 ============
@@ -136,6 +195,19 @@ export struct LaunchView {
   /** 日历里点中那天对应的发射，点空白日期时清空 */
   @State pickedLaunches: LaunchSummary[] = [];
 
+  // ---- 搜索 / 筛选 ----
+
+  /** 底部抽屉是否展开（bindSheet 的 isShow 绑定它） */
+  @State sheetOpen: boolean = false;
+  /** 搜索关键词。**输入即生效**，没有「确定」这一步 */
+  @State keyword: string = '';
+  /** 国家 / 地区。空串 = 不筛（与小程序 `filters.country === ''` 同语义） */
+  @State filtCountry: string = '';
+  /** 发射机构 */
+  @State filtAgency: string = '';
+  /** 运载火箭 */
+  @State filtRocket: string = '';
+
   // ============ 私有成员（不参与渲染） ============
 
   private scroller: Scroller = new Scroller();
@@ -145,6 +217,18 @@ export struct LaunchView {
   private loadingPrevious: boolean = false;
   /** 已追加过的 id，防止 upcomingMore 与首屏重叠时出现重复卡片 */
   private seenIds: Set<string> = new Set<string>();
+
+  /**
+   * 筛选候选缓存（普通成员，不进 @State）。
+   *
+   * 候选要遍历整表并排序，几十条到几百条无所谓，但它在 build 里被 read 到 ——
+   * 若换成 @State 每次重算都会再触发一轮重绘，形成「算 → 画 → 算」的循环。
+   * 所以只在列表真正变化时（applyUpcoming / applyPrevious / appendMore）重算，
+   * 用 filtDirty 标记「缓存过期」。
+   */
+  private filtGroups: FiltGroup[] = [];
+  /** 候选缓存是否过期。切段与数据落地时置 true，读取时按需重算 */
+  private filtDirty: boolean = true;
 
   // ============ 生命周期 ============
 
@@ -240,6 +324,8 @@ export struct LaunchView {
     const total: number = data.count !== undefined ? data.count : list.length;
     this.upcomingCount = total;
     this.stampOf(data.generatedAt);
+    // 列表换了，候选必须重算 —— 否则筛选面板还挂着上一版数据的机构名
+    this.filtDirty = true;
     // 首屏条数已经够全量（served >= count）就没必要再挂 more；
     // 反之说明还有 upcomingMore 可翻 —— 两次判断都要写，否则后台刷新把
     // 已追加的 373 条换回 100 条后，moreDone 还停在 true，列表永远补不回来
@@ -250,6 +336,7 @@ export struct LaunchView {
     const list: LaunchSummary[] = data.list !== undefined ? data.list : [];
     this.previous = list;
     this.stampOf(data.generatedAt);
+    this.filtDirty = true;
   }
 
   /** 只在新时间非空时才覆盖，避免某一路没带 generatedAt 把已有时间冲掉 */
@@ -317,6 +404,8 @@ export struct LaunchView {
     if (kept.length > 0) {
       // 整体替换才能触发 @State 数组的重绘
       this.upcoming = this.upcoming.concat(kept);
+      // 追加也会带来新的机构 / 型号，候选同样过期
+      this.filtDirty = true;
     }
     const total: number = data.count !== undefined ? data.count : this.upcomingCount;
     if (total > this.upcomingCount) {
@@ -367,6 +456,10 @@ export struct LaunchView {
       return;
     }
     this.activeTab = tab;
+    // 换段等于换候选源（待发射 ↔ 已发射），候选缓存必须作废；
+    // 已选的维度值**保留** —— 两个 feed 里 SpaceX / 猎鹰 9 号 都存在，
+    // 强行清空反而让用户在两个 tab 之间反复重选同一家机构
+    this.filtDirty = true;
     // 切段回顶：另一段的第一条应该从屏幕顶端开始，而不是沿用上一段的滚动位置。
     // 只有目标段已有数据时 List 才存在；空段落的 Scroller 还没绑上节点，
     // 这时调 scrollEdge 拿不到目标，直接跳过
@@ -411,6 +504,292 @@ export struct LaunchView {
   /** 当前段要渲染的列表。返回引用而不是拷贝，ForEach 靠它做 diff */
   private currentList(): LaunchSummary[] {
     return this.activeTab === TAB_UPCOMING ? this.upcoming : this.previous;
+  }
+
+  // ============ 搜索 / 筛选 ============
+
+  /**
+   * 某个维度在一条数据上的原始取值（空串 = 这条没有该维度的信息）。
+   *
+   * country 直接存中文名：USA / United States 两种写法经 countryOf 归一后
+   * 自然合并成一个选项，这正是我们要的（对位 index.vue:202 的 dimValue）。
+   */
+  private dimValueOf(item: LaunchSummary, key: string): string {
+    if (key === FILT_COUNTRY) {
+      return countryOf(item);
+    }
+    if (key === FILT_AGENCY) {
+      const p: LaunchProvider | undefined = item.launch_service_provider;
+      return (p !== undefined && p !== null) ? strOf(p.name).trim() : '';
+    }
+    if (key === FILT_ROCKET) {
+      const r: LaunchRocket | undefined = item.rocket;
+      if (r === undefined || r === null) {
+        return '';
+      }
+      const c: RocketConfig = r.configuration;
+      if (c === undefined || c === null) {
+        return '';
+      }
+      return strOf(c.name).trim();
+    }
+    return '';
+  }
+
+  /**
+   * 维度的中文显示名。
+   *
+   * 值始终保持原始英文（等于筛选协议），只有展示走标签表 ——
+   * 否则「猎鹰 9 号」写进 filtRocket 后，下一版标签表一改就全对不上了。
+   */
+  private dimLabelOf(key: string, item: LaunchSummary): string {
+    if (key === FILT_AGENCY) {
+      const label: string = providerLabelOf(item);
+      return label.length > 0 ? label : this.dimValueOf(item, key);
+    }
+    if (key === FILT_ROCKET) {
+      const label: string = rocketLabelOf(item);
+      return label.length > 0 ? label : this.dimValueOf(item, key);
+    }
+    return this.dimValueOf(item, key);
+  }
+
+  /** 维度段标题 */
+  private dimTitleOf(key: string): string {
+    if (key === FILT_COUNTRY) {
+      return '国家 / 地区';
+    }
+    if (key === FILT_AGENCY) {
+      return '发射机构';
+    }
+    return '运载火箭';
+  }
+
+  /** 维度候选上限（对位 OPT_LIMIT） */
+  private dimLimitOf(key: string): number {
+    if (key === FILT_COUNTRY) {
+      return OPT_LIMIT_COUNTRY;
+    }
+    if (key === FILT_AGENCY) {
+      return OPT_LIMIT_AGENCY;
+    }
+    return OPT_LIMIT_ROCKET;
+  }
+
+  /**
+   * 算某一份数据的某一维候选。
+   *
+   * 走 Map 而不是 index signature —— ArkTS 禁动态下标，`acc[value]++` 编译不过。
+   * 排序先按出现次数降序，次数相同时按取值字典序，保证同一份数据每次算出来的
+   * 顺序完全一致（否则 chips 会在两次重算之间莫名换位）。
+   */
+  private buildGroup(list: LaunchSummary[], key: string): FiltGroup {
+    const hits: Map<string, number> = new Map<string, number>();
+    // value → 该维度上第一次出现的样本，用来取中文显示名。
+    // 同一个 value 的显示名是确定的，但 Format 里那些函数吃整个 LaunchSummary，
+    // 所以留一条样本比再开一个「值 → 标签」函数便宜
+    const samples: Map<string, LaunchSummary> = new Map<string, LaunchSummary>();
+
+    for (let i = 0; i < list.length; i++) {
+      const item: LaunchSummary = list[i];
+      const v: string = this.dimValueOf(item, key);
+      if (v.length === 0) {
+        continue;
+      }
+      // "Unknown" 是 LL2 的占位值，选它等于「没有机构」，进候选只是噪音
+      if (key === FILT_AGENCY && v.toLowerCase() === 'unknown') {
+        continue;
+      }
+      const prev: number | undefined = hits.get(v);
+      hits.set(v, prev === undefined ? 1 : prev + 1);
+      if (!samples.has(v)) {
+        samples.set(v, item);
+      }
+    }
+
+    // Map 没有 sort，先摊平成数组再排
+    const values: string[] = [];
+    hits.forEach((n: number, v: string) => {
+      values.push(v);
+    });
+    const counts: number[] = [];
+    for (let i = 0; i < values.length; i++) {
+      const n: number | undefined = hits.get(values[i]);
+      counts.push(n === undefined ? 0 : n);
+    }
+    // 两个平行数组同步排序：ArkTS 没有稳定 sort 保证，先按次数排，
+    // 相同时按值排，结果与顺序无关地确定
+    const order: number[] = [];
+    for (let i = 0; i < values.length; i++) {
+      order.push(i);
+    }
+    order.sort((a: number, b: number) => {
+      if (counts[b] !== counts[a]) {
+        return counts[b] - counts[a];
+      }
+      return values[a] < values[b] ? -1 : (values[a] > values[b] ? 1 : 0);
+    });
+
+    const limit: number = this.dimLimitOf(key);
+    const options: FiltOption[] = [];
+    for (let i = 0; i < order.length && i < limit; i++) {
+      const idx: number = order[i];
+      const v: string = values[idx];
+      const sample: LaunchSummary | undefined = samples.get(v);
+      let label: string = v;
+      if (sample !== undefined) {
+        const zh: string = this.dimLabelOf(key, sample);
+        if (zh.length > 0) {
+          label = zh;
+        }
+      }
+      options.push(new FiltOption(v, label, counts[idx]));
+    }
+    return new FiltGroup(key, this.dimTitleOf(key), options);
+  }
+
+  /**
+   * 三个维度的候选（带缓存）。
+   *
+   * `候选少于 2 个的维度整组不显示` —— 只剩一个选项的维度筛了也是全选，
+   * 白占一块面板高度。
+   */
+  private groups(): FiltGroup[] {
+    if (!this.filtDirty) {
+      return this.filtGroups;
+    }
+    const list: LaunchSummary[] = this.currentList();
+    const keys: string[] = [FILT_COUNTRY, FILT_AGENCY, FILT_ROCKET];
+    const out: FiltGroup[] = [];
+    for (let i = 0; i < keys.length; i++) {
+      const g: FiltGroup = this.buildGroup(list, keys[i]);
+      if (g.options.length > 1) {
+        out.push(g);
+      }
+    }
+    this.filtGroups = out;
+    this.filtDirty = false;
+    return out;
+  }
+
+  /** 某维度当前选中的值 */
+  private pickedOf(key: string): string {
+    if (key === FILT_COUNTRY) {
+      return this.filtCountry;
+    }
+    if (key === FILT_AGENCY) {
+      return this.filtAgency;
+    }
+    if (key === FILT_ROCKET) {
+      return this.filtRocket;
+    }
+    return '';
+  }
+
+  /** 选中某维度的某个值（空串 = 取消该维度） */
+  private pickDim(key: string, value: string): void {
+    // 再点一次已选中的 chip 就取消 —— 面板上没有单独的「全部」按钮，
+    // 靠这个手势给出退出路径
+    const next: string = this.pickedOf(key) === value ? '' : value;
+    if (key === FILT_COUNTRY) {
+      this.filtCountry = next;
+    } else if (key === FILT_AGENCY) {
+      this.filtAgency = next;
+    } else if (key === FILT_ROCKET) {
+      this.filtRocket = next;
+    }
+  }
+
+  /** 是否处于「筛过」状态：关键词或任一维度非空 */
+  private hasFilter(): boolean {
+    return this.keyword.length > 0 || this.filtCountry.length > 0 ||
+      this.filtAgency.length > 0 || this.filtRocket.length > 0;
+  }
+
+  /** 生效条件数（悬浮钮角标）：关键词算 1，三个维度各算 1 */
+  private activeFilterCount(): number {
+    let n: number = 0;
+    if (this.keyword.length > 0) {
+      n = n + 1;
+    }
+    if (this.filtCountry.length > 0) {
+      n = n + 1;
+    }
+    if (this.filtAgency.length > 0) {
+      n = n + 1;
+    }
+    if (this.filtRocket.length > 0) {
+      n = n + 1;
+    }
+    return n;
+  }
+
+  /**
+   * 一条数据的关键词命中面。
+   *
+   * 任务名要**中英文各自判断**：name 恒存在，写成 `nameZh || name` 再匹配的话
+   * 中文名永远轮不到，搜「嫦娥」整组落空（原项目 2026-10-24 复审的 P1-1）。
+   * 火箭 / 机构同时喂英文原名和中文标签，这样「猎鹰」「SpaceX」「星链」都有人接。
+   */
+  private hayOf(item: LaunchSummary): string {
+    const parts: string[] = [];
+    const mission: LaunchMission | undefined = item.mission;
+    if (mission !== undefined && mission !== null) {
+      parts.push(strOf(mission.nameZh));
+      parts.push(strOf(mission.name));
+    }
+    parts.push(strOf(item.name));
+    parts.push(strOf(rocketLabelOf(item)));
+    const r: LaunchRocket | undefined = item.rocket;
+    if (r !== undefined && r !== null) {
+      const c: RocketConfig = r.configuration;
+      if (c !== undefined && c !== null) {
+        parts.push(strOf(c.name));
+        parts.push(strOf(c.full_name));
+      }
+    }
+    parts.push(strOf(providerLabelOf(item)));
+    const p: LaunchProvider | undefined = item.launch_service_provider;
+    if (p !== undefined && p !== null) {
+      parts.push(strOf(p.name));
+    }
+    parts.push(strOf(placeLabelOf(item)));
+    return parts.join(' ').toLowerCase();
+  }
+
+  /** 当前列表按三维 + 关键词过滤后的结果。空条件直接跳过，不做无谓遍历 */
+  private filteredList(): LaunchSummary[] {
+    const base: LaunchSummary[] = this.currentList();
+    if (!this.hasFilter()) {
+      return base;
+    }
+    const kw: string = this.keyword.trim().toLowerCase();
+    const out: LaunchSummary[] = [];
+    for (let i = 0; i < base.length; i++) {
+      const item: LaunchSummary = base[i];
+      if (this.filtCountry.length > 0 && this.dimValueOf(item, FILT_COUNTRY) !== this.filtCountry) {
+        continue;
+      }
+      if (this.filtAgency.length > 0 && this.dimValueOf(item, FILT_AGENCY) !== this.filtAgency) {
+        continue;
+      }
+      if (this.filtRocket.length > 0 && this.dimValueOf(item, FILT_ROCKET) !== this.filtRocket) {
+        continue;
+      }
+      if (kw.length > 0 && this.hayOf(item).indexOf(kw) < 0) {
+        continue;
+      }
+      out.push(item);
+    }
+    return out;
+  }
+
+  /** 重置：关键词与三维一起清（对用户来说「重置」= 回到最初的样子） */
+  private resetFilter(): void {
+    this.keyword = '';
+    this.filtCountry = '';
+    this.filtAgency = '';
+    this.filtRocket = '';
   }
 
   /**
@@ -465,7 +844,7 @@ export struct LaunchView {
     return '已发射 ' + this.previous.length + ' 次';
   }
 
-  /** 统计行副文（对位 .stat-sub；没有筛选功能，改成载入进度 + 数据时间） */
+  /** 统计行副文（对位 .stat-sub；有筛选时追加「已筛出 x 条」） */
   private statSub(): string {
     const parts: string[] = [];
     if (this.activeTab === TAB_UPCOMING) {
@@ -476,6 +855,11 @@ export struct LaunchView {
       }
     } else {
       parts.push('最近 ' + this.previous.length + ' 条');
+    }
+    // 主文恒为「共 N 次发射」的总数，过滤信息只放副文 ——
+    // 用户扫一眼就知道「筛了但总数没变」，不会以为数据被筛丢了
+    if (this.hasFilter()) {
+      parts.push('已筛出 ' + this.filteredList().length + ' 条');
     }
     const updated: string = formatGeneratedAt(this.generatedAt);
     if (updated.length > 0) {
@@ -725,14 +1109,28 @@ export struct LaunchView {
       Text(this.activeTab === TAB_UPCOMING ? '🛰' : '📜')
         .fontSize(34)
         .opacity(0.5)
-      Text(this.activeTab === TAB_UPCOMING ? '暂无待发射任务' : '暂无已发射记录')
+      Text(this.hasFilter()
+        ? '没有符合条件的发射'
+        : (this.activeTab === TAB_UPCOMING ? '暂无待发射任务' : '暂无已发射记录'))
         .fontSize(13)
         .fontColor('#A7B4C7')
         .margin({ top: 10 })
-      Text('下拉或稍后重试')
+      Text(this.hasFilter() ? '试试重置关键词或换一个筛选' : '下拉或稍后重试')
         .fontSize(11)
         .fontColor('#55617A')
         .margin({ top: 6 })
+      if (this.hasFilter()) {
+        Text('重置筛选')
+          .fontSize(12)
+          .fontColor(ACCENT)
+          .padding({ left: 14, right: 14, top: 6, bottom: 6 })
+          .margin({ top: 12 })
+          .borderRadius(999)
+          .border({ width: 1, color: '#6638BDF8' })
+          .onClick(() => {
+            this.resetFilter();
+          })
+      }
     }
     .width('100%')
     .layoutWeight(1)
@@ -768,9 +1166,273 @@ export struct LaunchView {
     .padding({ top: 14, bottom: 14 })
   }
 
+  // ---- 筛选面板（底部抽屉内容） ----
+
+  /**
+   * 抽屉内容：标题行 → 搜索框 → 三维 chips → 结果按钮。
+   *
+   * chips 点击**立即生效**，抽屉里没有「确定」草稿态 —— 后面的列表同步在变，
+   * 底部按钮只回显结果数顺手关面板，用户中途放弃也不会留下半应用的状态。
+   */
+  @Builder
+  filterSheet() {
+    Column() {
+      // 重置只在真的筛过时出现：常驻一个点了没反应的按钮比不放更糟
+      Row() {
+        Text('筛选与搜索')
+          .fontSize(16)
+          .fontWeight(FontWeight.Bold)
+          .fontColor('#FFFFFF')
+          .layoutWeight(1)
+
+        if (this.hasFilter()) {
+          Text('重置')
+            .fontSize(12.5)
+            .fontColor(ACCENT)
+            .padding({ left: 12, right: 12, top: 6, bottom: 6 })
+            .borderRadius(999)
+            .backgroundColor('#2938BDF8')
+            .onClick(() => {
+              this.resetFilter();
+            })
+        }
+      }
+      .width('100%')
+      .alignItems(VerticalAlign.Center)
+      // 右侧留 40vp：bindSheet 自带一个系统关闭钮固定在右上角，
+      // 不留位置时「重置」会和它叠在一起（2026-11-03 截图实测重叠）。
+      .padding({ top: 2, bottom: 14, right: 40 })
+
+      this.searchBox()
+
+      if (this.groups().length === 0) {
+        this.panelEmpty()
+      } else {
+        Scroll() {
+          Column() {
+            ForEach(this.groups(), (g: FiltGroup) => {
+              this.dimSection(g)
+            }, (g: FiltGroup) => 'fg_' + g.key)
+          }
+          .width('100%')
+          .alignItems(HorizontalAlign.Start)
+        }
+        .width('100%')
+        .layoutWeight(1)
+        .scrollBar(BarState.Off)
+        .edgeEffect(EdgeEffect.Spring)
+        .align(Alignment.Top)
+        .margin({ top: 6 })
+      }
+
+      Text('查看 ' + this.filteredList().length + ' 个结果')
+        .fontSize(14)
+        .fontWeight(FontWeight.Medium)
+        .fontColor('#04121C')
+        .textAlign(TextAlign.Center)
+        .width('100%')
+        .height(46)
+        .borderRadius(23)
+        .backgroundColor(ACCENT)
+        .margin({ top: 12 })
+        .onClick(() => {
+          this.sheetOpen = false;
+        })
+    }
+    .width('100%')
+    .height('100%')
+    .padding({ left: PAGE_PAD, right: PAGE_PAD, top: 14, bottom: 14 })
+    .alignItems(HorizontalAlign.Start)
+  }
+
+  /** 搜索框：输入即生效，右侧清除钮只在有内容时出现 */
+  @Builder
+  searchBox() {
+    Row() {
+      // 单向 text 绑定够用：清除按钮改 keyword 后组件会随状态重绘清空，
+      // 反之输入走 onChange 回写，两条路径最终都收敛到同一个 @State
+      TextInput({ text: this.keyword, placeholder: '搜索任务名、火箭、机构' })
+        .type(InputType.Normal)
+        .fontSize(13)
+        .fontColor('#FFFFFF')
+        .placeholderColor('#6B7891')
+        .placeholderFont({ size: 13 })
+        .backgroundColor('#00000000')
+        .padding(0)
+        .height(38)
+        .layoutWeight(1)
+        // 不做防抖：过滤只是一次本地数组遍历，而「查看 N 个结果」要跟着
+        // 每个字符即时变，加延迟反而像卡了
+        .onChange((v: string) => {
+          this.keyword = v;
+        })
+
+      if (this.keyword.length > 0) {
+        Text('✕')
+          .fontSize(12)
+          .fontColor('#6B7891')
+          .width(26)
+          .textAlign(TextAlign.Center)
+          .onClick(() => {
+            this.keyword = '';
+          })
+      }
+    }
+    .width('100%')
+    .padding({ left: 14, right: 6 })
+    .backgroundColor('#0D1420')
+    .borderRadius(999)
+    .border({ width: 1, color: '#14FFFFFF' })
+  }
+
+  /** 抽屉空态：首屏还没到、或这批数据压根没有可筛字段 */
+  @Builder
+  panelEmpty() {
+    Column() {
+      Text('当前列表没有可筛选的维度')
+        .fontSize(12)
+        .fontColor('#55617A')
+    }
+    .width('100%')
+    .layoutWeight(1)
+    .justifyContent(FlexAlign.Center)
+    .alignItems(HorizontalAlign.Center)
+  }
+
+  /** 一个维度：段标题 + 可折行 chips */
+  @Builder
+  dimSection(g: FiltGroup) {
+    Column() {
+      Text(g.label)
+        .fontSize(12)
+        .fontColor('#55617A')
+        .letterSpacing(0.5)
+        .margin({ top: 12, bottom: 8 })
+
+      // Row 不支持折行，要换行只能用 Flex(Wrap)；Flex 不认 space，
+      // 间距靠每个 chip 自己的 margin 撑
+      Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.Start }) {
+        ForEach(g.options, (opt: FiltOption) => {
+          Text(opt.label)
+            .fontSize(12)
+            .fontColor(this.pickedOf(g.key) === opt.value ? ACCENT : '#A7B4C7')
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            // Text 没有 maxWidth，长中文机构名靠 constraintSize 封顶
+            .constraintSize({ maxWidth: 200 })
+            .padding({ left: 12, right: 12, top: 7, bottom: 7 })
+            .borderRadius(999)
+            .backgroundColor(this.pickedOf(g.key) === opt.value ? '#2938BDF8' : CARD_BG)
+            // 未选中也给 1vp 透明描边：否则选中瞬间多出一圈边，整行 chip 会跳一下
+            .border({
+              width: 1,
+              color: this.pickedOf(g.key) === opt.value ? '#6638BDF8' : '#00000000'
+            })
+            .margin({ right: 8, bottom: 8 })
+            .onClick(() => {
+              this.pickDim(g.key, opt.value);
+            })
+        }, (opt: FiltOption) => 'fo_' + g.key + '_' + opt.value)
+      }
+      .width('100%')
+    }
+    .width('100%')
+    .alignItems(HorizontalAlign.Start)
+  }
+
+  // ---- 右下角两个悬浮圆钮 ----
+
+  /** 悬浮钮①：搜索（有筛选生效时右上角挂数字角标） */
+  @Builder
+  fabSearch() {
+    Stack({ alignContent: Alignment.TopEnd }) {
+      // 图标用 emoji 而不是 $r('app.media.*')：工程里没有搜索图标资源，
+      // 引用不存在的 media 会直接编译失败
+      Column() {
+        Text('🔍')
+          .fontSize(18)
+      }
+      .width(FAB_SIZE)
+      .height(FAB_SIZE)
+      .borderRadius(FAB_SIZE / 2)
+      .backgroundColor('#F21E283C')
+      .border({ width: 1, color: '#1AFFFFFF' })
+      .shadow({ radius: 16, color: '#80000000', offsetY: 4 })
+      .justifyContent(FlexAlign.Center)
+      .alignItems(HorizontalAlign.Center)
+      .onClick(() => {
+        this.sheetOpen = true;
+      })
+
+      if (this.activeFilterCount() > 0) {
+        // 用 toString 而不是 `'' + n`：ArkTS 对隐式数值转字符串的检查更严，
+        // 显式转换在这里零成本
+        Text(this.activeFilterCount().toString())
+          .fontSize(9)
+          .fontWeight(FontWeight.Medium)
+          .fontColor('#04121C')
+          .textAlign(TextAlign.Center)
+          .width(16)
+          .height(16)
+          .borderRadius(8)
+          .backgroundColor(ACCENT)
+          // offset 不参与布局，角标可以越出圆钮边界
+          .offset({ x: 4, y: -4 })
+      }
+    }
+    .width(FAB_SIZE)
+    .height(FAB_SIZE)
+  }
+
+  /** 悬浮钮②：柱状图。三条不同高度的圆角竖条，不依赖任何图标资源 */
+  @Builder
+  fabStats() {
+    Column() {
+      Row({ space: 3 }) {
+        Column()
+          .width(3.5)
+          .height(8)
+          .borderRadius(2)
+          .backgroundColor('#A7B4C7')
+        Column()
+          .width(3.5)
+          .height(13)
+          .borderRadius(2)
+          .backgroundColor('#A7B4C7')
+        Column()
+          .width(3.5)
+          .height(18)
+          .borderRadius(2)
+          .backgroundColor(ACCENT)
+      }
+      .height(18)
+      // 底对齐：三条竖条高度不同，靠这个让它们在一条基线上长出来
+      .alignItems(VerticalAlign.Bottom)
+    }
+    .width(FAB_SIZE)
+    .height(FAB_SIZE)
+    .borderRadius(FAB_SIZE / 2)
+    .backgroundColor('#F21E283C')
+    .border({ width: 1, color: '#1AFFFFFF' })
+    .shadow({ radius: 16, color: '#80000000', offsetY: 4 })
+    .justifyContent(FlexAlign.Center)
+    .alignItems(HorizontalAlign.Center)
+    .onClick(() => {
+      // 走空白页栈：统计页是独立工具页，不该挤进发射页的返回历史
+      Nav.pushBlank(ROUTE_STATS);
+    })
+  }
+
   // ============ build ============
 
-  build() {
+  /**
+   * 页面主体。
+   *
+   * 从 build 里整体拆出来，是因为 build 现在要叠三层：主体 + 两个悬浮钮 + 抽屉，
+   * 而 `bindSheet` 要挂在主体上（锚点是页面而不是窗口）。
+   */
+  @Builder
+  feedPage() {
     Column() {
       this.header()
       this.modeBar()
@@ -819,8 +1481,8 @@ export struct LaunchView {
       } else {
         this.statRow()
 
-        if (this.currentList().length === 0) {
-          // 空列表：要么还在等首屏（骨架），要么真的没有（空态）
+        if (this.filteredList().length === 0) {
+          // 空列表：要么还在等首屏（骨架），要么真的没有 —— 包括「筛完变空」
           if (this.loading) {
             this.skeletonList()
           } else {
@@ -828,7 +1490,7 @@ export struct LaunchView {
           }
         } else {
           List({ scroller: this.scroller }) {
-            ForEach(this.currentList(), (item: LaunchSummary) => {
+            ForEach(this.filteredList(), (item: LaunchSummary) => {
               ListItem() {
                 LaunchCard({
                   item: item,
@@ -864,5 +1526,33 @@ export struct LaunchView {
     // 左右 12vp 页面内边距 + 底部 120 胶囊让位（padding 直接缩内容区，
     // 列表最后一项能完整滚出来，不会被悬浮胶囊压住）
     .padding({ left: PAGE_PAD, right: PAGE_PAD, bottom: BOTTOM_PAD })
+  }
+
+  build() {
+    // 根从 Column 换成 Stack：两枚悬浮钮要浮在列表之上，且不能被列表裁剪。
+    // Stack 内的子节点按 BottomEnd 对齐，主体自己撑满，悬浮层只占右下角。
+    Stack({ alignContent: Alignment.BottomEnd }) {
+      this.feedPage()
+
+      Column({ space: FAB_GAP }) {
+        this.fabSearch()
+        this.fabStats()
+      }
+      .margin({ right: FAB_RIGHT, bottom: FAB_BOTTOM })
+    }
+    .width('100%')
+    .height('100%')
+    .backgroundColor(BG_PRIMARY)
+    // 抽屉挂在根上而不是挂在某个按钮上：按钮在 Stack 里会被列表重绘牵连，
+    // 挂在页面上时序更稳。onDisappear 负责把状态同步回来 —— 用户下滑关闭时
+    // isShow 不会自己变 false，不接这个回调按钮就成了「开一次之后永久失效」。
+    .bindSheet(this.sheetOpen, this.filterSheet(), {
+      height: SheetSize.LARGE,
+      dragBar: true,
+      backgroundColor: CARD_BG,
+      onDisappear: () => {
+        this.sheetOpen = false;
+      }
+    })
   }
 }
