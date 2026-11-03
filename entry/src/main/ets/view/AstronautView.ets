@@ -1,106 +1,185 @@
 /**
  * view/AstronautView.ets —— 航天员详情页（对位小程序 pages/astronaut/astronaut.vue）
  *
- * 本文件由路由方（DetailPages.ets）以 `<AstronautView param>` 形式挂进 NavDestination，
- * 入参只有 id（string，调用方负责 toString）。返回走 Nav.pop()，与 RocketDetailView 同口径。
+ * 本文件由路由方（DetailPages.ets:298）以 `<AstronautView astronautId={id}>` 挂进 NavDestination，
+ * 入参只有 id（string，调用方负责 toString）。返回走 Nav.pop()。
  *
  * ── 数据链路：先 peek 再 load ──
- *   repo.peek<AstronautsPayload>('astronauts')  同步、只查内存+文件，零网络
- *   repo.load<AstronautsPayload>('astronauts', { onUpdate })
+ *   repo.peek<T>(name)  同步、只查内存+文件，零网络
+ *   repo.load<T>(name, { onUpdate })
  *     onUpdate 只在「缓存过期 + 后台刷新拿到新数据」时才回调，用来静默回填
  *
  *   astronauts.json 是 862 条 / 约 700KB 的大集合，进这一页**不该**再拉一遍全量：
  *   只要缓存里有，peek 就能立刻上屏；缓存为空时才真正走一次网络（冷启动首进）。
  *
- * ── 为什么 found / failed 必须分开（原项目踩过的永久空页坑）──
- *   repo.load 在「无缓存 + 网络失败」时是 **reject**，不是返回 null。
- *   老的 utils/data.js 写法在 catch 里顺手把 loaded 置 true，页面就永久停在
- *   「查无此人」——网络抖一下等于把这个人从库里删了。所以这里：
- *     loading && !found          → 加载中
- *     failed  && !found          → 加载失败 + 「加载失败，点此重试」
- *     !failed && !found && 已结束 → 真的没这条记录
- *     found                      → 正常内容（此时刷新失败也继续显示旧数据）
+ * ── 三个数据集，各自兜底 ──
+ *   主线：astronauts（决定 found / 未找到）
+ *   副线：spacestations + expeditions（只用于「所属空间站 / 参与远征队」两张反向索引卡）
+ *   副线任何一个 404 都不能拖累主流程 —— 与小程序 onLoad 里两个独立 try 同口径：
+ *   拿不到就那两张卡不画，人还是要显示出来。
  *
- * ── 字段口径（已逐条核对 model/Astronaut.ets，不猜）──
- *   Astronaut         : id name status? inSpace days? evaHours? age? flights?
- *                       spacewalks? nation? agencyName? img? credit? bio? bioZh?
- *                       dob? dod? wiki? twitter? instagram? missions? evas?
- *   AstronautMission  : id(string, LL2 发射 UUID) net st? name? rk? dest?
- *                       → **没有 role 字段**，第二行用 rk · 日期 · 目的地 代替
- *   AstronautEva      : name? start? h? loc?
+ * ── 「所属空间站」照抄小程序，且只照抄 ──
+ *   小程序是 `allStations.filter(s => (s.crew||[]).some(m => m.id === id))`，
+ *   线上 spacestations.json 的 15 条 crew 实测**全是空数组**（model/Station.ets:13
+ *   写死了这条实测结论），所以这张卡在小程序里当前也永远不出现 —— 两边一致。
+ *   曾经加过第二级「远征队 stationId 反推」，已撤掉：那会让老航天员凭空长出
+ *   小程序没有的卡片，与「逐页对齐」相反。数据侧补齐 crew 后这里自动出卡，不用改。
  *
- * ── 其它取舍 ──
- *   1. 姓名走 astroName(name, nation)：中国籍查 CHINA_ASTRO_ZH 专名表，
- *      查不到保留拼音 —— 编一个错名字比显示拼音更糟。
- *   2. 简介用 descText(bioZh, bio)（中文优先），超过 120 字才给展开按钮。
- *      bio 只有「在轨人员」才有（CI 侧裁剪过），历史航天员靠任务列表撑内容。
- *   3. 数字格 0 与 undefined 一律显示 —：0 天/0 小时在这份数据里通常表示
- *      「没统计到」，画成 0 会被读成「飞了 0 天」。
- *   4. missions / evas 空数组在 slim 里**不落字段**，所以全部按 undefined 兜。
+ * ── 姓名为什么可以读 nameZh ──
+ *   model/Astronaut.ets 刻意没声明 nameZh（产品约定「中文名优先走前端专名表」），
+ *   但线上 862 条里 830 条 nameZh 非空，是 CI 的 fillAstronautNames() 回填的，
+ *   比 CHINA_ASTRO_ZH（只覆盖中国籍 31 人）全得多。本文件用 AstroFull 扩展一层拿到它，
+ *   查不到再退 astroName()（中国人走专名表，其他人保留原文）—— 编错名字比显示拼音更糟。
  *
- * ⚠ 本文件不使用 console.*，日志一律 hilog。不使用 AppStorage。
+ * ── 三态（对齐小程序，不再区分「加载失败」）──
+ *   小程序只有 loading / empty / content 三态，load 失败时 a 为空，落到同一个 empty。
+ *   这里保持同口径；失败只打 hilog，不再单独给「点此重试」——
+ *   一个只有 862 条静态数据的人，显示「未找到」比显示「网络不给力」更接近真相。
+ *
+ * ⚠ 本文件不使用 console.*，日志一律 hilog。不使用 AppStorage。无定时器。
  */
 
 import { hilog } from '@kit.PerformanceAnalysisKit';
-import { BusinessError } from '@kit.BasicServicesKit';
+import { BusinessError, pasteboard } from '@kit.BasicServicesKit';
 import { repo, LoadOptions } from '../data/Repository';
 import { Astronaut, AstronautMission, AstronautEva, AstronautsPayload } from '../model/Astronaut';
+import { BasePayload } from '../model/Common';
+import { StnItem, StnCrew, StnPayload, stnStatusText } from '../model/Station';
 import {
-  strOf, astroName, nationZh, agencyLabel, flagOf, destName, dayOf, descText, descNeedFold
+  strOf, astroName, nationZh, agencyLabel, destName, dayOf, descText, descNeedFold,
+  expeditionName, stationName
 } from '../utils/Format';
 import { Nav } from '../routes/Nav';
-import { LaunchNavParam } from '../routes/NavParam';
+import { LaunchNavParam, StationNavParam, ExpeditionNavParam, PhotoNavParam } from '../routes/NavParam';
 
 const DOMAIN: number = 0x0000;
 const TAG: string = 'AstronautView';
 
-// ============ 视觉常量（工程约定） ============
+// ============ 视觉常量（数值取自小程序 wxss，rpx ÷ 2 = vp） ============
 
+// 颜色一律用 #AARRGGBB：工程既有文件（FloatingTabBar.ets:100 的 '#2938BDF8'）就是这个写法，
+// 而 CSS 的 rgba() 串在 ArkUI 里虽然多数场合能认，但 Divider/边框这类老接口上不稳，
+// 统一转成 8 位 hex 最省心。换算方式：alpha×255 取整 → 两位 hex。
 const BG_PRIMARY: string = '#0A0E17';
 const CARD_BG: string = '#141A26';
-const CARD_RADIUS: number = 12;
-const CARD_PAD: number = 14;
-const CARD_GAP: number = 10;
+/** 小程序卡片边框 1rpx rgba(255,255,255,.05) → 0.05×255 ≈ 0x0D */
+const CARD_LINE: string = '#0DFFFFFF';
+const CARD_RADIUS: number = 10;
+/** 卡片自带左右边距 16（根容器不再统一 PAGE_PAD，卡片各管各的） */
+const CARD_SIDE: number = 16;
+const CARD_TOP: number = 12;
+const CARD_PAD_V: number = 12;
+const CARD_PAD_H: number = 16;
 
-const TEXT_MAIN: string = '#FFFFFF';
-const TEXT_SUB: string = '#A7B4C7';
+const TEXT_NAME: string = '#E2E8F0';
 const TEXT_DIM: string = '#55617A';
+/** 标签字 / KPI 标签 / 生卒行 / 副行：小程序统一 #6b7891 */
+const TEXT_LABEL: string = '#6B7891';
+const TEXT_DESC: string = '#C6CFDD';
+const TEXT_MUTED: string = '#94A3B8';
+/** 页脚 / 箭头：比三级灰再暗一档 */
+const TEXT_FOOT: string = '#3D4A5C';
 const ACCENT: string = '#38BDF8';
-/** 在轨用成功绿；其余状态（现役/退役/已故）统一压成中性灰，不抢视线 */
-const ACTIVE_GREEN: string = '#34C759';
-const RETIRED_GRAY: string = '#55617A';
-/** 分隔线：比卡片亮一点点，够看出分栏又不抢视线 */
-const DIVIDER: string = '#1E2736';
 
-/** Hero 高度（任务书 240vp） */
-const HERO_H: number = 240;
-/** 页面左右内边距（与 TodayView / RocketDetailView 的 12 对齐） */
-const PAGE_PAD: number = 12;
-/**
- * 底部 120：任务书明确要求（底部悬浮胶囊让位）。
- * 本页虽由详情栈推入、胶囊此时已被 Index 摘掉，但留 120 是保险值 ——
- * 万一将来从 tab 内直接嵌进来，内容不会被胶囊盖住最后一格。
- */
-// 底部留白：本页是 NavDestination 二级页，胶囊在详情页打开时已被摘掉，
-// 不需要按 tab 根页那样让位 92~120，32 只够滑到底时最后一行不贴边。
+/** rgba(255,255,255,.06) → 0x0F */
+const TAG_BG: string = '#0FFFFFFF';
+/** rgba(56,189,248,.16) → 0x29；与 FloatingTabBar 选中态同值 */
+const TAG_ON_BG: string = '#2938BDF8';
+/** rgba(255,255,255,.05) → 0x0D */
+const TAG_DIM_BG: string = '#0DFFFFFF';
+/** rgba(56,189,248,.1) → 0x1A */
+const DEST_BG: string = '#1A38BDF8';
+/** rgba(56,189,248,.14) → 0x24 */
+const DOT_HALO: string = '#2438BDF8';
+/** rgba(255,255,255,.04) → 0x0A */
+const ROW_LINE: string = '#0AFFFFFF';
+/** 证件照描边 rgba(255,255,255,.06) → 0x0F */
+const AVATAR_LINE: string = '#0FFFFFFF';
+/** 顶栏返回键的圆形半透明黑底（小程序 nav-bar 的胶囊返回）：rgba(0,0,0,.35) → 0x59 */
+const NAV_BTN_BG: string = '#59000000';
+
+/** 证件照 84vp（小程序 168rpx） */
+const AVATAR: number = 84;
+/** 顶栏高度：32 圆钮 + 上下 8 */
+const NAV_H: number = 48;
 const BOTTOM_PAD: number = 32;
 
-/** 简介折叠行数（任务书 6 行） */
-const BIO_FOLD_LINES: number = 6;
-/** 超过这个字符数才显示「展开」：6 行 × 约 20 汉字 ≈ 120 */
+/** 简介折叠 4 行（小程序 -webkit-line-clamp: 4） */
+const BIO_FOLD_LINES: number = 4;
+/**
+ * 超过 120 字符才给「展开全文」。
+ * 与小程序 descNeedFoldOf(this.bioText) 不传 limit 时的默认阈值一致
+ * （utils/Format.ets:1377 的 descNeedFold 缺省也是 120），按字符数比、不看 textUnits。
+ */
 const BIO_FOLD_MIN: number = 120;
-/** 出舱记录最多显示条数（slim 侧本来也只留 8 条） */
-const EVA_MAX: number = 8;
+const AVATAR_PLACEHOLDER: string = '🧑‍🚀';
 
-/** 无头像时的占位 */
-const AVATAR_PLACEHOLDER: string = '👨‍🚀';
-
-// ============ 纯函数（放在 @Component 外面，避免每次重绘重建闭包） ============
+// ============ 类型（本文件专用，统一 Astro 前缀） ============
 
 /**
- * 状态中文化。LL2 只有 5 种值，写死 if 链比 Map 更省事，
- * 也避开「不能 new Record」的限制。
+ * Astronaut 的扩展视图。
+ * 只加一个 nameZh —— 数据里本来就有，只是 model 层按产品约定没声明。
  */
+interface AstroFull extends Astronaut {
+  nameZh?: string;
+}
+
+/** expeditions.json 的乘组成员。字段与 ExpeditionView.ets 的 ExpCrew 同构，这里重声明避免 view 互引 */
+interface AstroExpCrew {
+  id?: number;
+  name?: string;
+  role?: string;
+  agency?: string;
+  img?: string;
+}
+
+/** expeditions.json 的一条。id / stationId 是 number，路由参数是 string，比对统一 String() */
+interface AstroExpItem {
+  id?: number;
+  name?: string;
+  start?: string;
+  end?: string;
+  stationId?: number;
+  stationName?: string;
+  crew?: AstroExpCrew[];
+}
+
+interface AstroExpPayload extends BasePayload {
+  list: AstroExpItem[];
+}
+
+/**
+ * 反向索引的一行（空间站）。
+ * 用 class 而不是对象字面量：ArkTS 禁止无类型对象字面量，先 new 再 push。
+ */
+class AstroStnRef {
+  id: string = '';
+  name: string = '';
+  sub: string = '';
+
+  constructor(id: string, name: string, sub: string) {
+    this.id = id;
+    this.name = name;
+    this.sub = sub;
+  }
+}
+
+/** 反向索引的一行（远征队） */
+class AstroExpRef {
+  id: string = '';
+  name: string = '';
+  sub: string = '';
+
+  constructor(id: string, name: string, sub: string) {
+    this.id = id;
+    this.name = name;
+    this.sub = sub;
+  }
+}
+
+// ============ 纯函数（放模块级，避免每次重绘重建闭包） ============
+
+/** 状态中文：LL2 枚举 Active/Retired/Deceased/In space/Unknown（与小程序 statusZh 一致） */
 function astroStatusZh(status: string): string {
   const s: string = strOf(status).trim();
   if (s === 'Active') {
@@ -118,28 +197,93 @@ function astroStatusZh(status: string): string {
   if (s === 'Unknown') {
     return '未知';
   }
-  return s;
+  return '';
 }
 
-/**
- * 数字格取值：undefined / 0 一律给 —。
- *
- * 为什么把 0 也当空：days / evaHours / flights 在 LL2 里对「没统计到」和
- * 「真的 0」不作区分，画成 0 会被读成「飞了 0 次」，比 — 更误导。
- */
+/** undefined / <=0 一律 →「—」：0 天 / 0 小时在这份数据里表示「没统计到」，画成 0 会被读成事实 */
 function numCell(v: number | undefined): string {
-  if (v === undefined) {
-    return '—';
-  }
-  if (v <= 0) {
+  if (v === undefined || v <= 0) {
     return '—';
   }
   return String(v);
 }
 
-/** 把非空片段用 · 连起来，空串不占位置（避免出现 " ·  · ISS" 这种残缺分隔） */
+/**
+ * ISO 日期 → 「1978 年 2 月 27 日」。
+ *
+ * 为什么不构造 Date：数据是 UTC 零补位串，东八区会跨零点推一天——
+ * 与 dayOf() 的注释同一个理由（utils/Format.ets:160-164）。
+ * 也不做正则捕获组：纯 substring + Number 判定，ArkTS 对下标访问更宽容。
+ */
+function cnDay(v: string): string {
+  const s: string = strOf(v).trim();
+  if (s.length < 7) {
+    return '';
+  }
+  const y: string = s.substring(0, 4);
+  const year: number = Number(y);
+  // NaN 参与任何比较都是 false，所以 !(year > 0) 同时挡住空串与非法年份
+  if (!(year > 0)) {
+    return '';
+  }
+  const mon: number = Number(s.substring(5, 7));
+  if (!(mon > 0)) {
+    return '';
+  }
+  const head: string = y + ' 年 ' + String(mon) + ' 月';
+  if (s.length < 10) {
+    return head;
+  }
+  const day: number = Number(s.substring(8, 10));
+  if (!(day > 0)) {
+    return head;
+  }
+  return head + ' ' + String(day) + ' 日';
+}
+
+/** 非空片段用 «空格 · 空格» 连起来，空串不占位置（不出 " ·  · ISS" 这种残缺分隔） */
 function joinParts(parts: string[]): string {
   return parts.join(' · ');
+}
+
+/** 远征队起止：「2024-03-05 — 至今」；start 缺失时只给「至今」 */
+function expRange(start: string, end: string): string {
+  const s: string = dayOf(start);
+  const tail: string = dayOf(end).length > 0 ? dayOf(end) : '至今';
+  return s.length > 0 ? s + ' — ' + tail : tail;
+}
+
+/** 空间站名册里有没有我。crew 实测全空，这里做成通用函数等数据补齐 */
+function stnCrewHas(crew: StnCrew[] | undefined, key: string): boolean {
+  if (crew === undefined) {
+    return false;
+  }
+  for (let i = 0; i < crew.length; i++) {
+    const id: number | undefined = crew[i].id;
+    if (id !== undefined && String(id) === key) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/** 远征队名册里有没有我（expeditions.json 的 crew 实测是有内容的） */
+function expCrewHas(crew: AstroExpCrew[] | undefined, key: string): boolean {
+  if (crew === undefined) {
+    return false;
+  }
+  for (let i = 0; i < crew.length; i++) {
+    const id: number | undefined = crew[i].id;
+    if (id !== undefined && String(id) === key) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/** number → 非空字符串；undefined 返回空串（路由参数不接受 undefined） */
+function idText(v: number | undefined): string {
+  return v !== undefined ? String(v) : '';
 }
 
 @Component
@@ -153,32 +297,35 @@ export struct AstronautView {
   @State loading: boolean = true;
   /** 是否拿到了这条记录 */
   @State found: boolean = false;
-  /** 加载失败（无缓存 + 网络失败）。与「未找到」严格分开，见文件头说明 */
-  @State failed: boolean = false;
 
-  /** 展示名（中文名优先） */
+  /** 展示名（nameZh 优先，其次专名表，最后原名） */
   @State astName: string = '';
   /** 状态中文（现役 / 退役 / 已故 …） */
   @State astStatus: string = '';
   /** 此刻是否在轨 */
   @State astInSpace: boolean = false;
+  /** 已故：状态章要压暗（小程序 tag-dim），年龄标签也随之隐藏 */
+  @State astDeceased: boolean = false;
   /** 国籍中文 */
   @State astNation: string = '';
-  /** 国旗 emoji（flagOf 返回 emoji，不是图片路径） */
-  @State astFlag: string = '';
   /** 机构短名 */
   @State astAgency: string = '';
+  /** 年龄标签（在世才显示，形如 "46 岁"；空串 = 不画这颗胶囊） */
+  @State ageText: string = '';
+
   /** 头像地址 */
   @State avatarUrl: string = '';
   /** 头像加载失败 → 退回 emoji 占位，避免破图 */
   @State avatarErr: boolean = false;
 
-  /** 概览三格（已格式化，— 表示无值） */
+  /** 生卒行（「生于 …」或「… — …」） */
+  @State lifeText: string = '';
+
+  /** KPI 四格（已格式化，— 表示无值） */
   @State daysText: string = '—';
-  @State evaHoursText: string = '—';
   @State flightsText: string = '—';
-  /** 出舱次数（空串 = 没有统计） */
-  @State walkText: string = '';
+  @State walkText: string = '—';
+  @State evaHoursText: string = '—';
 
   /** 简介正文（bioZh || bio） */
   @State bioText: string = '';
@@ -187,15 +334,33 @@ export struct AstronautView {
 
   /** 飞行任务（原样保留 model 结构，渲染时再取字段） */
   @State missionList: AstronautMission[] = [];
-  /** 出舱记录（已裁到最多 8 条） */
+  /** 出舱记录 */
   @State evaList: AstronautEva[] = [];
-  /** 出舱总次数（spacewalks 优先，缺失时退 evas.length） */
-  @State evaTotal: number = 0;
+
+  /** 资料卡：出生 / 逝世日期文本 */
+  @State dobText: string = '';
+  @State dodText: string = '';
+  /** 三个外链原值，空串 = 不画那一行 */
+  @State wikiUrl: string = '';
+  @State twitterUrl: string = '';
+  @State instaUrl: string = '';
+  /** 资料卡是否有任何一行可画（小程序 hasProfile） */
+  @State hasProfile: boolean = false;
+
+  /** 反向索引：所属空间站 / 参与远征队 */
+  @State stnRefs: AstroStnRef[] = [];
+  @State expRefs: AstroExpRef[] = [];
+
+  /** 反查原料（不参与渲染，故不做 @State，省掉无谓的重绘） */
+  private allStations: StnItem[] = [];
+  private allExps: AstroExpItem[] = [];
+  /** 反查用的 id 文本（applyAstronaut 时落一次） */
+  private astroKey: string = '';
 
   // ============ 生命周期 ============
 
   aboutToAppear(): void {
-    this.loadAstronaut(false);
+    this.reload(false);
     // 无定时器、无监听、无长连接，aboutToDisappear 无事可做，故不实现
   }
 
@@ -205,43 +370,75 @@ export struct AstronautView {
    * 先 peek 再 load。
    *
    * peek 是同步的（内存 + 文件），冷启动能立刻把详情画出来；
-   * 找不到（或压根没缓存）才等 load。
-   * force=true 只给「失败重试」用：绕过缓存直接回源，避免重试还命中那份坏缓存。
+   * 三个数据集各自 peek 一次，谁有缓存谁先落地，互不阻塞。
+   * force=true 只给将来可能的「绕过缓存」用（当前三态里没有重试入口，保留参数以免改签名）。
    */
-  private loadAstronaut(force: boolean): void {
+  private reload(force: boolean): void {
     this.loading = true;
-    this.failed = false;
 
-    const cached: AstronautsPayload | null = repo.peek<AstronautsPayload>('astronauts');
-    if (cached !== null) {
-      const hit: Astronaut | null = this.findAstronaut(cached);
-      if (hit !== null) {
-        this.applyAstronaut(hit);
-        // 缓存就命中 → 立刻收掉 loading，不等网络（后台刷新照常进行）
-        this.loading = false;
-      }
+    const cachedAstro: AstronautsPayload | null = repo.peek<AstronautsPayload>('astronauts');
+    if (cachedAstro !== null) {
+      this.applyPayload(cachedAstro);
+    }
+    const cachedStn: StnPayload | null = repo.peek<StnPayload>('spacestations');
+    if (cachedStn !== null) {
+      this.applyStations(cachedStn);
+    }
+    const cachedExp: AstroExpPayload | null = repo.peek<AstroExpPayload>('expeditions');
+    if (cachedExp !== null) {
+      this.applyExpeditions(cachedExp);
+    }
+    if (this.found) {
+      // 缓存就命中 → 立刻收掉 loading，不等网络（后台刷新照常进行）
+      this.loading = false;
     }
 
-    const opts: LoadOptions<AstronautsPayload> = {
+    const astroOpts: LoadOptions<AstronautsPayload> = {
       force: force,
       onUpdate: (fresh: AstronautsPayload) => {
         // 后台刷新只做回填；找不到就保持现有画面，不把已渲染的页打回「未找到」
         this.applyPayload(fresh);
       }
     };
-
-    repo.load<AstronautsPayload>('astronauts', opts)
+    repo.load<AstronautsPayload>('astronauts', astroOpts)
       .then((data: AstronautsPayload) => {
         // 命中缓存时 resolve 的就是缓存值，重复落地一次无害（幂等）
         this.applyPayload(data);
         this.loading = false;
-        this.failed = false;
       })
       .catch((e: BusinessError) => {
+        // 小程序同口径：拿不到就当没有，落到 empty；不额外做「加载失败」态
         this.loading = false;
-        // 已经有内容就别说「失败」，静默留在旧数据上（弱网体验优先）
-        this.failed = !this.found;
         hilog.warn(DOMAIN, TAG, 'astronauts 加载失败: %{public}s', e.message);
+      });
+
+    const stnOpts: LoadOptions<StnPayload> = {
+      force: force,
+      onUpdate: (fresh: StnPayload) => {
+        this.applyStations(fresh);
+      }
+    };
+    repo.load<StnPayload>('spacestations', stnOpts)
+      .then((data: StnPayload) => {
+        this.applyStations(data);
+      })
+      .catch((e: BusinessError) => {
+        // 副线失败只影响「所属空间站」卡，不拖累主流程
+        hilog.warn(DOMAIN, TAG, 'spacestations 加载失败（反向索引暂不显示）: %{public}s', e.message);
+      });
+
+    const expOpts: LoadOptions<AstroExpPayload> = {
+      force: force,
+      onUpdate: (fresh: AstroExpPayload) => {
+        this.applyExpeditions(fresh);
+      }
+    };
+    repo.load<AstroExpPayload>('expeditions', expOpts)
+      .then((data: AstroExpPayload) => {
+        this.applyExpeditions(data);
+      })
+      .catch((e: BusinessError) => {
+        hilog.warn(DOMAIN, TAG, 'expeditions 加载失败（反向索引暂不显示）: %{public}s', e.message);
       });
   }
 
@@ -249,17 +446,26 @@ export struct AstronautView {
    * 取载荷里的 list。
    *
    * 为什么不直接写 `data.list !== undefined ? data.list : []`：
-   * AstronautsPayload.list 在 model 里是**必填**的 `Astronaut[]`，
-   * 拿必填类型和 undefined 做比较会被 ArkTS/TS 判成「两个类型无重叠」而报错。
-   * 这里先赋给一个显式可空的局部变量，既绕开类型层面，又保住运行时兜底
-   * （旧缓存里 list 真有可能缺）。
+   * 载荷里的 list 在 interface 上是**必填**的，拿必填类型和 undefined 做比较
+   * 会被 ArkTS 判成「两个类型无重叠」而报错。先赋给显式可空的局部变量，
+   * 既绕开类型层面，又保住运行时兜底（旧缓存里 list 真有可能缺）。
    */
   private listOf(data: AstronautsPayload): Astronaut[] {
     const maybe: Astronaut[] | undefined = data.list;
     return maybe !== undefined ? maybe : [];
   }
 
-  /** 数据落地：从载荷里找到这一条 → 拆到各个 @State */
+  private stnListOf(data: StnPayload): StnItem[] {
+    const maybe: StnItem[] | undefined = data.list;
+    return maybe !== undefined ? maybe : [];
+  }
+
+  private expListOf(data: AstroExpPayload): AstroExpItem[] {
+    const maybe: AstroExpItem[] | undefined = data.list;
+    return maybe !== undefined ? maybe : [];
+  }
+
+  /** 主数据落地：从载荷里找到这一条 → 拆到各个 @State */
   private applyPayload(data: AstronautsPayload): void {
     const hit: Astronaut | null = this.findAstronautIn(this.listOf(data));
     if (hit === null) {
@@ -269,13 +475,19 @@ export struct AstronautView {
     this.applyAstronaut(hit);
   }
 
-  private findAstronaut(data: AstronautsPayload): Astronaut | null {
-    return this.findAstronautIn(this.listOf(data));
+  private applyStations(data: StnPayload): void {
+    this.allStations = this.stnListOf(data);
+    this.rebuildRefs();
+  }
+
+  private applyExpeditions(data: AstroExpPayload): void {
+    this.allExps = this.expListOf(data);
+    this.rebuildRefs();
   }
 
   /**
    * 按 id 定位。id 在 model 里是 number，入参是 string，统一 String() 比较。
-   * 返回 null 表示「这一版载荷里没有他」，由调用方决定是等下一轮还是判未找到。
+   * 返回 null 表示「这一版载荷里没有他」，最终落到未找到态。
    */
   private findAstronautIn(list: Astronaut[]): Astronaut | null {
     const target: string = strOf(this.astronautId).trim();
@@ -295,26 +507,50 @@ export struct AstronautView {
 
   /** 一条记录 → 页面状态。所有字段都过一遍空值判定，不留 undefined 到 UI */
   private applyAstronaut(a: Astronaut): void {
-    const zhName: string = astroName(a.name, strOf(a.nation)).trim();
-    this.astName = zhName.length > 0 ? zhName : strOf(a.name).trim();
+    // nameZh 是数据里有、model 层没声明的字段，靠 AstroFull 扩展读出来
+    const full: AstroFull = a as AstroFull;
+    const zhFromData: string = strOf(full.nameZh).trim();
+    // 专名表兜底：China 籍走 CHINA_ASTRO_ZH，其余原样返回
+    const zhFromTable: string = astroName(strOf(a.name), strOf(a.nation)).trim();
+    this.astName = zhFromData.length > 0 ? zhFromData : (zhFromTable.length > 0 ? zhFromTable : strOf(a.name).trim());
+
     this.astStatus = astroStatusZh(strOf(a.status));
     this.astInSpace = a.inSpace === true;
+    this.astDeceased = strOf(a.status).trim() === 'Deceased';
     this.astNation = nationZh(strOf(a.nation));
-    this.astFlag = flagOf(strOf(a.nation));
     this.astAgency = agencyLabel(strOf(a.agencyName));
+
+    // 年龄只在世时给（小程序 `v-if="a.age && !a.dod"`）：
+    // 已故的人显示「86 岁」会被读成「还活着的老先生」，这是硬错误
+    const age: number | null | undefined = a.age;
+    const alive: boolean = strOf(a.dod).trim().length === 0;
+    this.ageText = age !== null && age !== undefined && age > 0 && alive ? String(age) + ' 岁' : '';
+
+    const dobRaw: string = strOf(a.dob).trim();
+    const dodRaw: string = strOf(a.dod).trim();
+    // 解析失败就退回原始串（小程序的 fmtDayText 也是「非日期串原样返回」），
+    // 否则一个格式异常的生卒日期会顺手把整张资料卡判成「没有资料」
+    const dobCn: string = cnDay(dobRaw);
+    const dodCn: string = cnDay(dodRaw);
+    const dob: string = dobCn.length > 0 ? dobCn : dobRaw;
+    const dod: string = dodCn.length > 0 ? dodCn : dodRaw;
+    if (dob.length === 0) {
+      this.lifeText = '';
+    } else {
+      // 健在只给生日，逝世给生卒区间 —— 与小程序的 birthText 一模一样
+      this.lifeText = dod.length > 0 ? dob + ' — ' + dod : '生于 ' + dob;
+    }
 
     this.avatarUrl = strOf(a.img).trim();
     // 换人时不继承上一条的破图标记
     this.avatarErr = false;
 
     this.daysText = numCell(a.days);
-    this.evaHoursText = numCell(a.evaHours);
     this.flightsText = numCell(a.flights);
-
-    // 先落局部变量再判空：ArkTS 对「可选属性」的收窄在长表达式里不可靠，
-    // 直接写 a.spacewalks > 0 可能被判成 number | undefined 参与比较
-    const walks: number | undefined = a.spacewalks;
-    this.walkText = walks !== undefined && walks > 0 ? String(walks) : '';
+    this.walkText = numCell(a.spacewalks);
+    const evaH: string = numCell(a.evaHours);
+    // 「—」不加 h：没有数据时写「—h」像是「0 小时」
+    this.evaHoursText = evaH === '—' ? '—' : evaH + 'h';
 
     this.bioText = descText(strOf(a.bioZh), strOf(a.bio)).trim();
     this.bioExpanded = false;
@@ -323,23 +559,118 @@ export struct AstronautView {
     this.missionList = missions;
 
     const evas: AstronautEva[] = a.evas !== undefined ? a.evas : [];
-    this.evaList = evas.length > EVA_MAX ? evas.slice(0, EVA_MAX) : evas;
-    // 统计口径优先用 spacewalks（含没有逐条日志的旧任务）；缺失时退列表长度
-    this.evaTotal = walks !== undefined && walks > 0 ? walks : evas.length;
+    this.evaList = evas;
 
+    // 资料卡：任一字段有值就出卡（小程序 hasProfile 同构）
+    this.dobText = dob;
+    this.dodText = dod;
+    this.wikiUrl = strOf(a.wiki).trim();
+    this.twitterUrl = strOf(a.twitter).trim();
+    this.instaUrl = strOf(a.instagram).trim();
+    this.hasProfile = this.dobText.length > 0 || this.dodText.length > 0
+      || this.wikiUrl.length > 0 || this.twitterUrl.length > 0 || this.instaUrl.length > 0;
+
+    this.astroKey = String(a.id);
     this.found = true;
+    // 主数据可能晚于副线到达，这里补算一次
+    this.rebuildRefs();
+  }
+
+  // ============ 反向索引 ============
+
+  /**
+   * 反向索引，两条独立：
+   *   一、所属空间站：本宇航员出现在哪几座空间站的「当前乘组」里。
+   *   二、参与远征队：expeditions.json 的 crew 里含我。
+   *
+   * ⚠ 空间站这一条**只按 crew 命中，不做任何次级反推**。
+   * 小程序的 myStations()（astronaut.vue:266-270）就是
+   * `allStations.filter(s => (s.crew || []).some(m => String(m.id) === id))`，
+   * 一行业务逻辑都不多。曾经写过第二级「本人在远征队 crew 里 → 该远征队的 stationId → 反推站」，
+   * 那是错的：spacestations.json 的 crew 当前 15 条实测全空，小程序因此**永远不显示这张卡**；
+   * 我们靠远征队反推，会让历史上所有没在站的老航天员都凭空长出一张「所属空间站」，
+   * 那是小程序没有的内容，与「逐页对齐」的目标正好相反。
+   * 数据侧补齐 crew 之后，这里不需要改一个字就会自动出卡。
+   *
+   * 两个数据源都可能还没到，所以任何一个到达都重算一次（幂等，结果只由原料决定）。
+   */
+  private rebuildRefs(): void {
+    const key: string = this.astroKey;
+    if (key.length === 0) {
+      this.stnRefs = [];
+      this.expRefs = [];
+      return;
+    }
+
+    const expOut: AstroExpRef[] = [];
+    for (let i = 0; i < this.allExps.length; i++) {
+      const e: AstroExpItem = this.allExps[i];
+      if (!expCrewHas(e.crew, key)) {
+        continue;
+      }
+      const eid: string = idText(e.id);
+      if (eid.length > 0) {
+        expOut.push(new AstroExpRef(eid, expeditionName(strOf(e.name)), expRange(strOf(e.start), strOf(e.end))));
+      }
+    }
+
+    const stnOut: AstroStnRef[] = [];
+    for (let i = 0; i < this.allStations.length; i++) {
+      const s: StnItem = this.allStations[i];
+      if (!stnCrewHas(s.crew, key)) {
+        continue;
+      }
+      const sid: string = idText(s.id);
+      if (sid.length === 0) {
+        continue;
+      }
+      stnOut.push(new AstroStnRef(sid, stationName(strOf(s.name)), stnStatusText(s.status)));
+    }
+
+    this.stnRefs = stnOut;
+    this.expRefs = expOut;
   }
 
   // ============ 交互 ============
 
-  private retry(): void {
-    this.loadAstronaut(true);
+  private toast(msg: string): void {
+    this.getUIContext().getPromptAction().showToast({ message: msg, duration: 2000 });
+  }
+
+  /**
+   * 复制链接。
+   *
+   * 详情页打不开外部网页（小程序 web-view 也受业务域名限制，源实现同样是「复制链接」），
+   * 所以三处外链一律写剪贴板 + toast，用户在浏览器里粘贴。
+   */
+  private copyLink(url: string, label: string): void {
+    const u: string = strOf(url).trim();
+    if (u.length === 0) {
+      return;
+    }
+    const data: pasteboard.PasteData = pasteboard.createData(pasteboard.MIMETYPE_TEXT_PLAIN, u);
+    pasteboard.getSystemPasteboard().setData(data)
+      .then(() => {
+        this.toast(label + '链接已复制');
+      })
+      .catch((e: BusinessError) => {
+        hilog.warn(DOMAIN, TAG, '复制链接失败 code=%{public}d', e.code);
+        this.toast('复制失败，请稍后重试');
+      });
+  }
+
+  /** 点证件照 → 全屏看图（对应小程序 previewImage） */
+  private openPhoto(): void {
+    if (this.avatarUrl.length === 0 || this.avatarErr) {
+      return;
+    }
+    Nav.pushPhoto(new PhotoNavParam(this.avatarUrl, this.astName));
   }
 
   /**
    * 点飞行任务 → 发射详情。
-   * model 里 AstronautMission.id 就是 LL2 发射 UUID，有才跳；没有就整行不响应
-   * （旧数据/归档缺失时点击跳过去也只会看到「未找到」）。
+   * AstronautMission.id 就是 LL2 发射 UUID，有才跳；没有就整行不响应
+   * （旧数据/归档缺失时点过去也只会看到「未找到」）。
    */
   private openMission(m: AstronautMission): void {
     const id: string = strOf(m.id).trim();
@@ -349,28 +680,21 @@ export struct AstronautView {
     Nav.pushLaunch(new LaunchNavParam(id, strOf(m.net), this.missionName(m)));
   }
 
-  // ============ 派生文案 ============
-
-  private headerTitle(): string {
-    return this.astName.length > 0 ? this.astName : '航天员';
-  }
-
-  /** 徽章文案：在轨优先，其次状态；都没有就不画徽章 */
-  private badgeText(): string {
-    if (this.astInSpace) {
-      return '在轨';
+  private openStation(ref: AstroStnRef): void {
+    if (ref.id.length === 0) {
+      return;
     }
-    return this.astStatus;
+    Nav.pushStation(new StationNavParam(ref.id));
   }
 
-  private badgeBgColor(): string {
-    return this.astInSpace ? ACTIVE_GREEN : RETIRED_GRAY;
+  private openExpedition(ref: AstroExpRef): void {
+    if (ref.id.length === 0) {
+      return;
+    }
+    Nav.pushExpedition(new ExpeditionNavParam(ref.id));
   }
 
-  /** 绿底配深色字，灰底配白字 —— 与 RocketDetailView 的现役/退役同口径 */
-  private badgeTextColor(): string {
-    return this.astInSpace ? BG_PRIMARY : TEXT_MAIN;
-  }
+  // ============ 派生文案 ============
 
   private bioLines(): number {
     // 展开时给一个大而有效的行数（不用 Infinity，避免布局测量异常）
@@ -391,7 +715,7 @@ export struct AstronautView {
     return rk.length > 0 ? rk : '未命名任务';
   }
 
-  /** 任务副行：火箭 · 日期 · 目的地。空片段自动跳过，不留残缺分隔符 */
+  /** 任务副行：只留「火箭 · 日期」，目的地单独做右侧胶囊（小程序 flight-side） */
   private missionSub(m: AstronautMission): string {
     const parts: string[] = [];
     const rk: string = strOf(m.rk).trim();
@@ -402,13 +726,16 @@ export struct AstronautView {
     if (day.length > 0) {
       parts.push(day);
     }
-    if (strOf(m.dest).trim().length > 0) {
-      const dest: string = destName(strOf(m.dest)).trim();
-      if (dest.length > 0) {
-        parts.push(dest);
-      }
-    }
     return joinParts(parts);
+  }
+
+  /** 目的地胶囊文案；空串 = 不画胶囊 */
+  private missionDest(m: AstronautMission): string {
+    const raw: string = strOf(m.dest).trim();
+    if (raw.length === 0) {
+      return '';
+    }
+    return destName(raw).trim();
   }
 
   private evaName(e: AstronautEva): string {
@@ -430,8 +757,7 @@ export struct AstronautView {
   }
 
   private evaHoursTextOf(e: AstronautEva): string {
-    // 先落局部变量再判：ArkTS 对可选属性的类型收窄不可靠，
-    // 直接写 e.h > 0 可能被判成 number | undefined 与 number 比较
+    // 先落局部变量再判：ArkTS 对可选属性的类型收窄不可靠
     const h: number | undefined = e.h;
     if (h === undefined || h <= 0) {
       return '';
@@ -439,273 +765,522 @@ export struct AstronautView {
     return String(h) + ' 小时';
   }
 
-  // ============ UI：页头（不滚动） ============
+  // ============ UI：顶栏（圆形返回键 + 居中标题，对位 nav-bar） ============
 
   @Builder
   topBar() {
-    Row() {
-      Row() {
-        Text('‹ 返回')
-          .fontSize(15)
-          .fontColor(TEXT_SUB)
-          .onClick(() => {
-            Nav.pop();
-          })
-      }
-      // 上下各 10vp 把热区撑到约 40vp，别让 15vp 的字直接当可点区域
-      .padding({ right: 12, top: 10, bottom: 10 })
+    Stack({ alignContent: Alignment.Start }) {
+      // 标题先画（处于底层），返回键后画浮在上面，点击不会被标题的空白区吞掉。
+      // lineHeight 直接给 NAV_H：单行文字的垂直居中交给行高做，
+      // 比在 Stack 上找「垂直居中」属性（Stack 没有 alignItems）稳。
+      Text('航天员')
+        .fontSize(23)
+        .fontWeight(600)
+        .fontColor(TEXT_NAME)
+        .width('100%')
+        .height(NAV_H)
+        .lineHeight(NAV_H)
+        .textAlign(TextAlign.Center)
 
-      Text(this.headerTitle())
-        .fontSize(16)
-        .fontWeight(FontWeight.Bold)
-        .fontColor(TEXT_MAIN)
-        .maxLines(1)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
-        .layoutWeight(1)
-        .margin({ left: 4 })
+      // Stack 的 alignContent 是 Start，所以 32 圆钮要自己压 (48-32)/2 = 8 才垂直居中
+      Row() {
+        Text('‹')
+          .fontSize(23)
+          .fontColor(TEXT_NAME)
+          .lineHeight(23)
+          // ‹ 的视觉重心偏上，压 2vp 才在圆钮里看着居中
+          .margin({ top: -2 })
+      }
+      .width(32)
+      .height(32)
+      .borderRadius(16)
+      .backgroundColor(NAV_BTN_BG)
+      .justifyContent(FlexAlign.Center)
+      .alignItems(VerticalAlign.Center)
+      .margin({ left: CARD_SIDE, top: (NAV_H - 32) / 2 })
+      .onClick(() => {
+        Nav.pop();
+      })
     }
     .width('100%')
-    .height(48)
-    .alignItems(VerticalAlign.Center)
+    .height(NAV_H)
   }
 
-  // ============ UI：Hero ============
+  // ============ UI：标签（四类胶囊横排，Flex 才能换行） ============
 
   @Builder
-  hero() {
-    Stack({ alignContent: Alignment.BottomStart }) {
-      // 1 头像大图 / emoji 占位
+  tagRow() {
+    // 多行 Flow 容器：Row 不支持换行（没有 flex-wrap 属性），换行只能用 Flex
+    Flex({ wrap: FlexWrap.Wrap }) {
+      if (this.astInSpace) {
+        Text('在轨')
+          .fontSize(10)
+          .fontColor(ACCENT)
+          .backgroundColor(TAG_ON_BG)
+          .padding({ left: 7, right: 7, top: 2, bottom: 2 })
+          .borderRadius(3)
+          .margin({ right: 5, bottom: 4 })
+      } else if (this.astStatus.length > 0) {
+        // 已故用 tag-dim 压暗，别把「已故」染成任何亮色
+        Text(this.astStatus)
+          .fontSize(10)
+          .fontColor(this.astDeceased ? TEXT_DIM : TEXT_LABEL)
+          .backgroundColor(this.astDeceased ? TAG_DIM_BG : TAG_BG)
+          .padding({ left: 7, right: 7, top: 2, bottom: 2 })
+          .borderRadius(3)
+          .margin({ right: 5, bottom: 4 })
+      }
+
+      if (this.astAgency.length > 0) {
+        Text(this.astAgency)
+          .fontSize(10)
+          .fontColor(TEXT_LABEL)
+          .backgroundColor(TAG_BG)
+          .padding({ left: 7, right: 7, top: 2, bottom: 2 })
+          .borderRadius(3)
+          .margin({ right: 5, bottom: 4 })
+      }
+
+      if (this.astNation.length > 0) {
+        Text(this.astNation)
+          .fontSize(10)
+          .fontColor(TEXT_LABEL)
+          .backgroundColor(TAG_BG)
+          .padding({ left: 7, right: 7, top: 2, bottom: 2 })
+          .borderRadius(3)
+          .margin({ right: 5, bottom: 4 })
+      }
+
+      if (this.ageText.length > 0) {
+        Text(this.ageText)
+          .fontSize(10)
+          .fontColor(TEXT_LABEL)
+          .backgroundColor(TAG_BG)
+          .padding({ left: 7, right: 7, top: 2, bottom: 2 })
+          .borderRadius(3)
+          .margin({ right: 5, bottom: 4 })
+      }
+    }
+    .width('100%')
+    .margin({ top: 7 })
+  }
+
+  // ============ UI：头部（横排证件照 + 姓名/标签/生卒） ============
+
+  @Builder
+  headBlock() {
+    Row() {
+      // 84×84 证件照，可点开大图；破图退回 emoji 占位
       if (this.avatarUrl.length > 0 && !this.avatarErr) {
         Image(this.avatarUrl)
-          .width('100%')
-          .height(HERO_H)
+          .width(AVATAR)
+          .height(AVATAR)
           .objectFit(ImageFit.Cover)
+          .borderRadius(CARD_RADIUS)
           .backgroundColor(CARD_BG)
+          .border({ width: 1, color: AVATAR_LINE })
           .onError(() => {
-            // 破图退回占位，比留一块 240vp 的空白好
             this.avatarErr = true;
+          })
+          .onClick(() => {
+            this.openPhoto();
           })
       } else {
         Column() {
           Text(AVATAR_PLACEHOLDER)
-            .fontSize(40)
+            .fontSize(36)
         }
-        .width('100%')
-        .height(HERO_H)
+        .width(AVATAR)
+        .height(AVATAR)
         .backgroundColor(CARD_BG)
+        .borderRadius(CARD_RADIUS)
+        .border({ width: 1, color: AVATAR_LINE })
         .justifyContent(FlexAlign.Center)
         .alignItems(HorizontalAlign.Center)
       }
 
-      // 2 底部压黑层：白色姓名压在任意亮度的照片上都要可读（angle 0 = 从下往上）
-      Column()
-        .width('100%')
-        .height('100%')
-        .linearGradient({
-          angle: 0,
-          colors: [
-            ['#D90A0E17', 0.0],
-            ['#000A0E17', 0.72]
-          ]
-        })
-        .hitTestBehavior(HitTestMode.None)
-
-      // 3 姓名 + 徽章 / 国籍 / 机构，三行压在图底
       Column() {
-        Row() {
-          Text(this.astName)
-            .fontSize(22)
-            .fontWeight(FontWeight.Bold)
-            .fontColor(TEXT_MAIN)
-            .maxLines(1)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
-            .layoutWeight(1)
+        Text(this.astName)
+          .fontSize(18)
+          .fontWeight(600)
+          .fontColor(TEXT_NAME)
+          // 18 × 1.3 ≈ 23（ArkUI 的 lineHeight 是绝对 fp，不是倍数）
+          .lineHeight(23)
+          .maxLines(2)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .width('100%')
 
-          if (this.badgeText().length > 0) {
-            Text(this.badgeText())
-              .fontSize(10.5)
-              .fontWeight(FontWeight.Bold)
-              .fontColor(this.badgeTextColor())
-              .backgroundColor(this.badgeBgColor())
-              .padding({ left: 8, right: 8, top: 3, bottom: 3 })
-              .borderRadius(6)
-              .margin({ left: 8 })
-          }
-        }
-        .width('100%')
-        .alignItems(VerticalAlign.Bottom)
+        this.tagRow()
 
-        if (this.astNation.length > 0) {
-          Row() {
-            if (this.astFlag.length > 0) {
-              Text(this.astFlag)
-                .fontSize(12)
-                .margin({ right: 4 })
-            }
-            Text(this.astNation)
-              .fontSize(12.5)
-              .fontColor(TEXT_SUB)
-              .maxLines(1)
-              .textOverflow({ overflow: TextOverflow.Ellipsis })
-          }
-          .alignItems(VerticalAlign.Center)
-          .margin({ top: 6 })
-        }
-
-        if (this.astAgency.length > 0) {
-          Text(this.astAgency)
-            .fontSize(11.5)
-            .fontColor(TEXT_SUB)
+        if (this.lifeText.length > 0) {
+          Text(this.lifeText)
+            .fontSize(11)
+            .fontColor(TEXT_LABEL)
             .maxLines(2)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .width('100%')
             .margin({ top: 3 })
         }
       }
-      .width('100%')
+      .layoutWeight(1)
       .alignItems(HorizontalAlign.Start)
-      .padding({ left: CARD_PAD, right: CARD_PAD, bottom: 14 })
-    }
-    .width('100%')
-    .height(HERO_H)
-    .borderRadius(CARD_RADIUS)
-    // 圆角裁切用 clip，不用 overflow（Attribute 上没有 overflow）
-    .clip(true)
-  }
-
-  // ============ UI：概览三格 ============
-
-  @Builder
-  statCell(value: string, label: string) {
-    Column() {
-      Text(value)
-        .fontSize(18)
-        .fontWeight(FontWeight.Bold)
-        // — 用三级灰，别让「没有数据」看起来像「数据是 0」
-        .fontColor(value === '—' ? TEXT_DIM : TEXT_MAIN)
-      Text(label)
-        .fontSize(11)
-        .fontColor(TEXT_DIM)
-        .margin({ top: 3 })
-        .maxLines(1)
-    }
-    .layoutWeight(1)
-    .alignItems(HorizontalAlign.Center)
-  }
-
-  @Builder
-  overviewCard() {
-    Row() {
-      this.statCell(this.daysText, '累计在轨（天）')
-      this.statCell(this.evaHoursText, '出舱小时')
-      this.statCell(this.flightsText, '飞行次数')
-    }
-    .width('100%')
-    .padding({ left: 8, right: 8, top: CARD_PAD, bottom: CARD_PAD })
-    .alignItems(VerticalAlign.Center)
-    .backgroundColor(CARD_BG)
-    .borderRadius(CARD_RADIUS)
-    .margin({ top: CARD_GAP })
-  }
-
-  // ============ UI：出舱统计 ============
-
-  @Builder
-  evaStatCard() {
-    Row() {
-      Text('出舱统计')
-        .fontSize(13)
-        .fontColor(TEXT_SUB)
-      Blank()
-      Text(this.walkText.length > 0 ? this.walkText + ' 次' : '— 次')
-        .fontSize(15)
-        .fontWeight(FontWeight.Bold)
-        .fontColor(this.walkText.length > 0 ? TEXT_MAIN : TEXT_DIM)
+      .margin({ left: 14 })
     }
     .width('100%')
     .alignItems(VerticalAlign.Center)
-    .padding(CARD_PAD)
+    .padding({ left: CARD_SIDE, right: CARD_SIDE, top: 8, bottom: 4 })
+  }
+
+  // ============ UI：KPI 四格 ============
+
+  @Builder
+  kpiBlock() {
+    Row() {
+      Column() {
+        Text(this.daysText)
+          .fontSize(16)
+          .fontWeight(600)
+          .fontColor(ACCENT)
+        Text('累计在轨（天）')
+          .fontSize(10)
+          .fontColor(TEXT_LABEL)
+          .maxLines(1)
+          .margin({ top: 4 })
+      }
+      .layoutWeight(1)
+      .alignItems(HorizontalAlign.Center)
+
+      Column() {
+        Text(this.flightsText)
+          .fontSize(16)
+          .fontWeight(600)
+          .fontColor(ACCENT)
+        Text('飞行次数')
+          .fontSize(10)
+          .fontColor(TEXT_LABEL)
+          .maxLines(1)
+          .margin({ top: 4 })
+      }
+      .layoutWeight(1)
+      .alignItems(HorizontalAlign.Center)
+
+      Column() {
+        Text(this.walkText)
+          .fontSize(16)
+          .fontWeight(600)
+          .fontColor(ACCENT)
+        Text('出舱次数')
+          .fontSize(10)
+          .fontColor(TEXT_LABEL)
+          .maxLines(1)
+          .margin({ top: 4 })
+      }
+      .layoutWeight(1)
+      .alignItems(HorizontalAlign.Center)
+
+      Column() {
+        Text(this.evaHoursText)
+          .fontSize(16)
+          .fontWeight(600)
+          .fontColor(ACCENT)
+        Text('累计出舱')
+          .fontSize(10)
+          .fontColor(TEXT_LABEL)
+          .maxLines(1)
+          .margin({ top: 4 })
+      }
+      .layoutWeight(1)
+      .alignItems(HorizontalAlign.Center)
+    }
+    .width('100%')
+    .alignItems(VerticalAlign.Center)
+    // 小程序 kpi：padding 24rpx 0 → 上下 12、左右 0
+    .padding({ left: 0, right: 0, top: CARD_PAD_V, bottom: CARD_PAD_V })
     .backgroundColor(CARD_BG)
     .borderRadius(CARD_RADIUS)
-    .margin({ top: CARD_GAP })
+    .margin({ left: CARD_SIDE, right: CARD_SIDE, top: 14 })
   }
 
   // ============ UI：简介 ============
 
   @Builder
-  bioCard() {
+  bioBlock() {
     Column() {
       Text('简介')
-        .fontSize(15)
-        .fontWeight(FontWeight.Bold)
-        .fontColor(TEXT_MAIN)
+        .fontSize(12)
+        .fontColor(TEXT_MUTED)
+        .margin({ bottom: 7 })
 
       Text(this.bioText)
         .fontSize(13)
-        .fontColor(TEXT_SUB)
-        .lineHeight(21)
+        .fontColor(TEXT_DESC)
+        // 13 × 1.7 ≈ 22
+        .lineHeight(22)
         .maxLines(this.bioLines())
         .textOverflow({ overflow: TextOverflow.Ellipsis })
         .width('100%')
-        .margin({ top: 8 })
 
       if (this.canExpandBio()) {
-        Row() {
-          Text(this.bioExpanded ? '收起' : '展开全文')
-            .fontSize(12)
-            .fontColor(ACCENT)
-          Text(this.bioExpanded ? '⌃' : '⌄')
-            .fontSize(11)
-            .fontColor(ACCENT)
-            .margin({ left: 3 })
-        }
-        .alignItems(VerticalAlign.Center)
-        .padding({ top: 8, bottom: 2 })
-        .onClick(() => {
-          this.bioExpanded = !this.bioExpanded;
-        })
+        Text(this.bioExpanded ? '收起' : '展开全文')
+          .fontSize(12)
+          .fontColor(ACCENT)
+          .margin({ top: 6 })
+          .onClick(() => {
+            this.bioExpanded = !this.bioExpanded;
+          })
       }
     }
     .width('100%')
     .alignItems(HorizontalAlign.Start)
-    .padding(CARD_PAD)
+    .padding({ left: CARD_PAD_H, right: CARD_PAD_H, top: CARD_PAD_V, bottom: CARD_PAD_V })
     .backgroundColor(CARD_BG)
     .borderRadius(CARD_RADIUS)
-    .margin({ top: CARD_GAP })
+    .border({ width: 1, color: CARD_LINE })
+    .margin({ left: CARD_SIDE, right: CARD_SIDE, top: CARD_TOP })
+  }
+
+  // ============ UI：所属空间站 ============
+
+  @Builder
+  stationBlock() {
+    Column() {
+      Text('所属空间站')
+        .fontSize(12)
+        .fontColor(TEXT_MUTED)
+        .margin({ bottom: 7 })
+
+      ForEach(this.stnRefs, (ref: AstroStnRef, i: number) => {
+        // 单根 Column：分隔线挂在行内，避免 ForEach 生成多个根节点
+        Column() {
+          Row() {
+            Column() {
+              Text(ref.name)
+                .fontSize(13.5)
+                .fontColor(TEXT_NAME)
+                .maxLines(1)
+                .textOverflow({ overflow: TextOverflow.Ellipsis })
+                .width('100%')
+              if (ref.sub.length > 0) {
+                Text(ref.sub)
+                  .fontSize(11)
+                  .fontColor(TEXT_LABEL)
+                  .maxLines(1)
+                  .textOverflow({ overflow: TextOverflow.Ellipsis })
+                  .width('100%')
+                  .margin({ top: 2 })
+              }
+            }
+            .layoutWeight(1)
+            .alignItems(HorizontalAlign.Start)
+
+            Text('›')
+              .fontSize(15)
+              .fontColor(TEXT_FOOT)
+              .margin({ left: 8 })
+          }
+          .width('100%')
+          .alignItems(VerticalAlign.Center)
+          .padding({ top: 8, bottom: 8 })
+          .onClick(() => {
+            this.openStation(ref);
+          })
+
+          if (i < this.stnRefs.length - 1) {
+            Divider()
+              .color(ROW_LINE)
+              .strokeWidth(1)
+          }
+        }
+        .width('100%')
+      }, (ref: AstroStnRef, i: number) => ref.id + '#' + String(i))
+    }
+    .width('100%')
+    .alignItems(HorizontalAlign.Start)
+    .padding({ left: CARD_PAD_H, right: CARD_PAD_H, top: CARD_PAD_V, bottom: CARD_PAD_V })
+    .backgroundColor(CARD_BG)
+    .borderRadius(CARD_RADIUS)
+    .border({ width: 1, color: CARD_LINE })
+    .margin({ left: CARD_SIDE, right: CARD_SIDE, top: CARD_TOP })
+  }
+
+  // ============ UI：参与远征队 ============
+
+  @Builder
+  expBlock() {
+    Column() {
+      Text('参与远征队')
+        .fontSize(12)
+        .fontColor(TEXT_MUTED)
+        .margin({ bottom: 7 })
+
+      ForEach(this.expRefs, (ref: AstroExpRef, i: number) => {
+        Column() {
+          Row() {
+            Column() {
+              Text(ref.name)
+                .fontSize(13.5)
+                .fontColor(TEXT_NAME)
+                .maxLines(1)
+                .textOverflow({ overflow: TextOverflow.Ellipsis })
+                .width('100%')
+              if (ref.sub.length > 0) {
+                Text(ref.sub)
+                  .fontSize(11)
+                  .fontColor(TEXT_LABEL)
+                  .maxLines(1)
+                  .textOverflow({ overflow: TextOverflow.Ellipsis })
+                  .width('100%')
+                  .margin({ top: 2 })
+              }
+            }
+            .layoutWeight(1)
+            .alignItems(HorizontalAlign.Start)
+
+            Text('›')
+              .fontSize(15)
+              .fontColor(TEXT_FOOT)
+              .margin({ left: 8 })
+          }
+          .width('100%')
+          .alignItems(VerticalAlign.Center)
+          .padding({ top: 8, bottom: 8 })
+          .onClick(() => {
+            this.openExpedition(ref);
+          })
+
+          if (i < this.expRefs.length - 1) {
+            Divider()
+              .color(ROW_LINE)
+              .strokeWidth(1)
+          }
+        }
+        .width('100%')
+      }, (ref: AstroExpRef, i: number) => ref.id + '#' + String(i))
+    }
+    .width('100%')
+    .alignItems(HorizontalAlign.Start)
+    .padding({ left: CARD_PAD_H, right: CARD_PAD_H, top: CARD_PAD_V, bottom: CARD_PAD_V })
+    .backgroundColor(CARD_BG)
+    .borderRadius(CARD_RADIUS)
+    .border({ width: 1, color: CARD_LINE })
+    .margin({ left: CARD_SIDE, right: CARD_SIDE, top: CARD_TOP })
   }
 
   // ============ UI：飞行任务 ============
 
   @Builder
-  missionCard() {
+  missionBlock() {
     Column() {
       Text('飞行任务')
-        .fontSize(15)
-        .fontWeight(FontWeight.Bold)
-        .fontColor(TEXT_MAIN)
+        .fontSize(12)
+        .fontColor(TEXT_MUTED)
+        .margin({ bottom: 7 })
 
       ForEach(this.missionList, (m: AstronautMission, i: number) => {
-        // 单根 Column：分隔线挂在行内，避免 ForEach 生成多个根节点
         Column() {
-          if (i > 0) {
-            Divider()
-              .color(DIVIDER)
-              .strokeWidth(1)
-              .margin({ top: 8, bottom: 8 })
-          }
-
           Row() {
             Column() {
               Text(this.missionName(m))
                 .fontSize(13.5)
-                .fontColor(TEXT_MAIN)
+                .fontColor(TEXT_NAME)
                 .maxLines(1)
                 .textOverflow({ overflow: TextOverflow.Ellipsis })
                 .width('100%')
               if (this.missionSub(m).length > 0) {
                 Text(this.missionSub(m))
                   .fontSize(11)
-                  .fontColor(TEXT_DIM)
-                  .maxLines(2)
+                  .fontColor(TEXT_LABEL)
+                  .maxLines(1)
+                  .textOverflow({ overflow: TextOverflow.Ellipsis })
+                  .width('100%')
+                  .margin({ top: 2 })
+              }
+            }
+            .layoutWeight(1)
+            .alignItems(HorizontalAlign.Start)
+
+            Row() {
+              // 目的地：右侧蓝色胶囊（小程序 flight-dest）
+              if (this.missionDest(m).length > 0) {
+                Text(this.missionDest(m))
+                  .fontSize(10)
+                  .fontColor(ACCENT)
+                  .backgroundColor(DEST_BG)
+                  .padding({ left: 6, right: 6, top: 1.5, bottom: 1.5 })
+                  .borderRadius(3)
+                  .maxLines(1)
+              }
+              // 有 LL2 发射 UUID 才给箭头，避免点了没反应
+              if (strOf(m.id).trim().length > 0) {
+                Text('›')
+                  .fontSize(15)
+                  .fontColor(TEXT_FOOT)
+                  .margin({ left: 6 })
+              }
+            }
+            .alignItems(VerticalAlign.Center)
+          }
+          .width('100%')
+          .alignItems(VerticalAlign.Center)
+          .padding({ top: 8, bottom: 8 })
+          .onClick(() => {
+            this.openMission(m);
+          })
+
+          if (i < this.missionList.length - 1) {
+            Divider()
+              .color(ROW_LINE)
+              .strokeWidth(1)
+          }
+        }
+        .width('100%')
+      }, (m: AstronautMission, i: number) => strOf(m.id) + '@' + strOf(m.net) + '#' + String(i))
+    }
+    .width('100%')
+    .alignItems(HorizontalAlign.Start)
+    .padding({ left: CARD_PAD_H, right: CARD_PAD_H, top: CARD_PAD_V, bottom: CARD_PAD_V })
+    .backgroundColor(CARD_BG)
+    .borderRadius(CARD_RADIUS)
+    .border({ width: 1, color: CARD_LINE })
+    .margin({ left: CARD_SIDE, right: CARD_SIDE, top: CARD_TOP })
+  }
+
+  // ============ UI：出舱记录 ============
+
+  @Builder
+  evaBlock() {
+    Column() {
+      Text('出舱记录')
+        .fontSize(12)
+        .fontColor(TEXT_MUTED)
+        .margin({ bottom: 7 })
+
+      ForEach(this.evaList, (e: AstronautEva, i: number) => {
+        Column() {
+          Row() {
+            // 时间线小圆点：10rpx 实心 + 4rpx 外发光。
+            // ArkUI 没有 box-shadow，用「大而淡的圆 + 小的实心圆」两层叠出同一效果
+            Stack() {
+              Circle({ width: 13, height: 13 })
+                .fill(DOT_HALO)
+              Circle({ width: 5, height: 5 })
+                .fill(ACCENT)
+            }
+            .width(13)
+            .height(13)
+
+            Column() {
+              Text(this.evaName(e))
+                .fontSize(13)
+                .fontColor('#CBD5E0')
+                .maxLines(1)
+                .textOverflow({ overflow: TextOverflow.Ellipsis })
+                .width('100%')
+              if (this.evaSub(e).length > 0) {
+                Text(this.evaSub(e))
+                  .fontSize(10.5)
+                  .fontColor(TEXT_LABEL)
+                  .maxLines(1)
                   .textOverflow({ overflow: TextOverflow.Ellipsis })
                   .width('100%')
                   .margin({ top: 3 })
@@ -713,199 +1288,232 @@ export struct AstronautView {
             }
             .layoutWeight(1)
             .alignItems(HorizontalAlign.Start)
+            .margin({ left: 9 })
 
-            // 有 LL2 发射 UUID 才给箭头，避免点了没反应
-            if (strOf(m.id).trim().length > 0) {
-              Text('›')
-                .fontSize(16)
-                .fontColor(TEXT_DIM)
-                .margin({ left: 8 })
+            if (this.evaHoursTextOf(e).length > 0) {
+              Text(this.evaHoursTextOf(e))
+                .fontSize(11.5)
+                .fontColor(ACCENT)
+                .margin({ left: 7 })
             }
           }
           .width('100%')
           .alignItems(VerticalAlign.Center)
-          .padding({ top: i > 0 ? 0 : 8, bottom: 2 })
-          .onClick(() => {
-            this.openMission(m);
-          })
+          .padding({ top: 8, bottom: 8 })
+
+          if (i < this.evaList.length - 1) {
+            Divider()
+              .color(ROW_LINE)
+              .strokeWidth(1)
+          }
         }
         .width('100%')
-      }, (m: AstronautMission, i: number) => strOf(m.id) + '@' + strOf(m.net) + '#' + String(i))
+      }, (e: AstronautEva, i: number) => strOf(e.name) + '@' + strOf(e.start) + '#' + String(i))
     }
     .width('100%')
     .alignItems(HorizontalAlign.Start)
-    .padding(CARD_PAD)
+    .padding({ left: CARD_PAD_H, right: CARD_PAD_H, top: CARD_PAD_V, bottom: CARD_PAD_V })
     .backgroundColor(CARD_BG)
     .borderRadius(CARD_RADIUS)
-    .margin({ top: CARD_GAP })
+    .border({ width: 1, color: CARD_LINE })
+    .margin({ left: CARD_SIDE, right: CARD_SIDE, top: CARD_TOP })
   }
 
-  // ============ UI：出舱活动列表 ============
+  // ============ UI：资料（生卒 + 三个外链，点击复制） ============
 
   @Builder
-  evaCard() {
+  profileBlock() {
     Column() {
-      Row() {
-        Text('出舱活动')
-          .fontSize(15)
-          .fontWeight(FontWeight.Bold)
-          .fontColor(TEXT_MAIN)
-        Blank()
-        // 总次数始终给出来：日志被裁到 8 条时，这里才是「共几次」的权威口径
-        if (this.evaTotal > 0) {
-          Text('共 ' + String(this.evaTotal) + ' 次')
-            .fontSize(11.5)
-            .fontColor(TEXT_DIM)
-        }
-      }
-      .width('100%')
-      .alignItems(VerticalAlign.Center)
+      Text('资料')
+        .fontSize(12)
+        .fontColor(TEXT_MUTED)
+        .margin({ bottom: 7 })
 
-      if (this.evaList.length === 0) {
-        Text('暂无逐条出舱记录')
-          .fontSize(12)
-          .fontColor(TEXT_DIM)
-          .margin({ top: 10 })
-      } else {
-        ForEach(this.evaList, (e: AstronautEva, i: number) => {
-          Column() {
-            if (i > 0) {
-              Divider()
-                .color(DIVIDER)
-                .strokeWidth(1)
-                .margin({ top: 8, bottom: 8 })
-            }
-
-            Row() {
-              // 小圆点：比序号轻，纯装饰不参与阅读
-              Column()
-                .width(6)
-                .height(6)
-                .borderRadius(3)
-                .backgroundColor(ACCENT)
-                .margin({ top: 6, right: 8 })
-
-              Column() {
-                Text(this.evaName(e))
-                  .fontSize(13)
-                  .fontColor(TEXT_MAIN)
-                  .maxLines(1)
-                  .textOverflow({ overflow: TextOverflow.Ellipsis })
-                  .width('100%')
-                if (this.evaSub(e).length > 0) {
-                  Text(this.evaSub(e))
-                    .fontSize(11)
-                    .fontColor(TEXT_DIM)
-                    .maxLines(1)
-                    .textOverflow({ overflow: TextOverflow.Ellipsis })
-                    .width('100%')
-                    .margin({ top: 3 })
-                }
-              }
-              .layoutWeight(1)
-              .alignItems(HorizontalAlign.Start)
-
-              if (this.evaHoursTextOf(e).length > 0) {
-                Text(this.evaHoursTextOf(e))
-                  .fontSize(12)
-                  .fontColor(TEXT_SUB)
-                  .margin({ left: 8 })
-              }
-            }
-            .width('100%')
-            .alignItems(VerticalAlign.Top)
-            .padding({ top: i > 0 ? 0 : 8, bottom: 2 })
-          }
-          .width('100%')
-        }, (e: AstronautEva, i: number) => strOf(e.name) + '@' + strOf(e.start) + '#' + String(i))
-      }
-    }
-    .width('100%')
-    .alignItems(HorizontalAlign.Start)
-    .padding(CARD_PAD)
-    .backgroundColor(CARD_BG)
-    .borderRadius(CARD_RADIUS)
-    .margin({ top: CARD_GAP })
-  }
-
-  // ============ UI：三态占位 ============
-
-  @Builder
-  stateBlock(title: string, hint: string, showRetry: boolean) {
-    Column() {
-      Text(title)
-        .fontSize(15)
-        .fontWeight(FontWeight.Medium)
-        .fontColor(TEXT_MAIN)
-      if (hint.length > 0) {
-        Text(hint)
-          .fontSize(12)
-          .fontColor(TEXT_DIM)
-          .textAlign(TextAlign.Center)
-          .margin({ top: 8 })
-      }
-      if (showRetry) {
+      if (this.dobText.length > 0) {
         Row() {
-          Text('加载失败，点此重试')
+          Text('出生')
+            .fontSize(12.5)
+            .fontColor(TEXT_LABEL)
+          Blank()
+          Text(this.dobText)
+            .fontSize(12.5)
+            .fontColor(TEXT_DESC)
+            .textAlign(TextAlign.End)
+        }
+        .width('100%')
+        .alignItems(VerticalAlign.Center)
+        .padding({ top: 6, bottom: 6 })
+      }
+
+      if (this.dodText.length > 0) {
+        Row() {
+          Text('逝世')
+            .fontSize(12.5)
+            .fontColor(TEXT_LABEL)
+          Blank()
+          Text(this.dodText)
+            .fontSize(12.5)
+            .fontColor(TEXT_DESC)
+            .textAlign(TextAlign.End)
+        }
+        .width('100%')
+        .alignItems(VerticalAlign.Center)
+        .padding({ top: 6, bottom: 6 })
+      }
+
+      if (this.wikiUrl.length > 0) {
+        Row() {
+          Text('维基百科')
+            .fontSize(12.5)
+            .fontColor(TEXT_LABEL)
+          Blank()
+          Text('复制链接')
             .fontSize(12.5)
             .fontColor(ACCENT)
         }
-        .padding({ left: 18, right: 18, top: 7, bottom: 7 })
-        .borderRadius(16)
-        .backgroundColor('#16222F')
-        .margin({ top: 16 })
+        .width('100%')
+        .alignItems(VerticalAlign.Center)
+        .padding({ top: 6, bottom: 6 })
         .onClick(() => {
-          this.retry();
+          this.copyLink(this.wikiUrl, '维基百科');
         })
       }
+
+      if (this.twitterUrl.length > 0) {
+        Row() {
+          Text('Twitter')
+            .fontSize(12.5)
+            .fontColor(TEXT_LABEL)
+          Blank()
+          Text('复制链接')
+            .fontSize(12.5)
+            .fontColor(ACCENT)
+        }
+        .width('100%')
+        .alignItems(VerticalAlign.Center)
+        .padding({ top: 6, bottom: 6 })
+        .onClick(() => {
+          this.copyLink(this.twitterUrl, 'Twitter');
+        })
+      }
+
+      if (this.instaUrl.length > 0) {
+        Row() {
+          Text('Instagram')
+            .fontSize(12.5)
+            .fontColor(TEXT_LABEL)
+          Blank()
+          Text('复制链接')
+            .fontSize(12.5)
+            .fontColor(ACCENT)
+        }
+        .width('100%')
+        .alignItems(VerticalAlign.Center)
+        .padding({ top: 6, bottom: 6 })
+        .onClick(() => {
+          this.copyLink(this.instaUrl, 'Instagram');
+        })
+      }
+    }
+    .width('100%')
+    .alignItems(HorizontalAlign.Start)
+    .padding({ left: CARD_PAD_H, right: CARD_PAD_H, top: CARD_PAD_V, bottom: CARD_PAD_V })
+    .backgroundColor(CARD_BG)
+    .borderRadius(CARD_RADIUS)
+    .border({ width: 1, color: CARD_LINE })
+    .margin({ left: CARD_SIDE, right: CARD_SIDE, top: CARD_TOP })
+  }
+
+  // ============ UI：页脚 ============
+
+  @Builder
+  footerBlock() {
+    Text('数据来源 The Space Devs')
+      .fontSize(10)
+      .fontColor(TEXT_FOOT)
+      .width('100%')
+      .textAlign(TextAlign.Center)
+      .margin({ top: 24 })
+  }
+
+  // ============ UI：两态占位（对齐小程序 loading / empty） ============
+
+  @Builder
+  loadingBlock() {
+    Column() {
+      // 英文三点，不是全角省略号（小程序原文就是 "加载中..."）
+      Text('加载中...')
+        .fontSize(13)
+        .fontColor(TEXT_LABEL)
+    }
+    .width('100%')
+    .layoutWeight(1)
+    .justifyContent(FlexAlign.Start)
+    .alignItems(HorizontalAlign.Center)
+    .padding({ left: 20, right: 20, top: 100, bottom: 20 })
+  }
+
+  @Builder
+  emptyBlock() {
+    Column() {
+      Text(AVATAR_PLACEHOLDER)
+        .fontSize(36)
+        .margin({ bottom: 12 })
+      Text('未找到该航天员信息')
+        .fontSize(13)
+        .fontColor(TEXT_LABEL)
     }
     .width('100%')
     .layoutWeight(1)
     .justifyContent(FlexAlign.Center)
     .alignItems(HorizontalAlign.Center)
-    .padding({ left: 24, right: 24 })
+    .padding({ left: 20, right: 20 })
   }
 
   // ============ build ============
 
   build() {
-    // 根容器统一留 12 侧距 + 120 底距（见文件头常量注释）；页头也在这条内边距里，
-    // 因此 Hero 与卡片左右边缘天然对齐，不需要各自再设 margin
+    // 根容器**不**统一加侧距：卡片各带 margin 16（任务书要求），
+    // 顶栏自己给 16，这样卡片边框能贴到 16 而内容还有 16 的内边距
     Column() {
       this.topBar()
 
       if (this.loading && !this.found) {
-        this.stateBlock('加载中…', '正在读取航天员档案', false)
-      } else if (this.failed && !this.found) {
-        this.stateBlock('加载失败', '网络不给力，或缓存已被清理', true)
+        this.loadingBlock()
       } else if (!this.found) {
-        this.stateBlock('未找到该航天员', '可能是链接已过期，或数据正在更新', false)
+        this.emptyBlock()
       } else {
         Scroll() {
           Column() {
-            this.hero()
+            this.headBlock()
+            this.kpiBlock()
 
-            Column() {
-              this.overviewCard()
-
-              // 出舱统计：spacewalks 有值，或至少有逐条日志时才画这张卡
-              if (this.walkText.length > 0 || this.evaTotal > 0) {
-                this.evaStatCard()
-              }
-              if (this.bioText.length > 0) {
-                this.bioCard()
-              }
-              if (this.missionList.length > 0) {
-                this.missionCard()
-              }
-              if (this.evaTotal > 0 || this.evaList.length > 0) {
-                this.evaCard()
-              }
+            if (this.bioText.length > 0) {
+              this.bioBlock()
             }
-            .width('100%')
-            .alignItems(HorizontalAlign.Start)
+            // 两张反向索引卡：数据没到就是空数组，整卡不出现
+            if (this.stnRefs.length > 0) {
+              this.stationBlock()
+            }
+            if (this.expRefs.length > 0) {
+              this.expBlock()
+            }
+            if (this.missionList.length > 0) {
+              this.missionBlock()
+            }
+            // 出舱卡：列表为空整卡不画（小程序同口径，没有「暂无逐条记录」）
+            if (this.evaList.length > 0) {
+              this.evaBlock()
+            }
+            if (this.hasProfile) {
+              this.profileBlock()
+            }
+
+            this.footerBlock()
           }
           .width('100%')
+          .alignItems(HorizontalAlign.Start)
+          .padding({ bottom: BOTTOM_PAD })
         }
         .width('100%')
         .layoutWeight(1)
@@ -917,6 +1525,5 @@ export struct AstronautView {
     .width('100%')
     .height('100%')
     .backgroundColor(BG_PRIMARY)
-    .padding({ left: PAGE_PAD, right: PAGE_PAD, bottom: BOTTOM_PAD })
   }
 }
