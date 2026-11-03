@@ -60,6 +60,36 @@
           ],
           "when": "inuse"
         }
+      },
+      {
+        // 代理提醒。**当前未启用**（实测 code=1700002：没有该权限时系统把配额当 0），
+        // 要真正生效得在 AGC 侧单独申请并用申请通过的正式 profile 签名 —— 属发布准备阶段。
+        // 先留在清单里不碍事：不调用接口就不会有影响。
+        "name": "ohos.permission.PUBLISH_AGENT_REMINDER"
+      },
+      {
+        // 发射提醒改用系统日历（对应小程序的 uni.addPhoneCalendar）。
+        // 两个权限缺一不可：
+        //   · READ_CALENDAR —— `getCalendarManager().getCalendar(account)` 要的是读权限
+        //     （d.ts 原文 `@permission ohos.permission.READ_CALENDAR`），只申 WRITE 会报 201；
+        //   · WRITE_CALENDAR —— `addEvent` / `deleteEvent` 要写权限。
+        // 两者都是 user_grant、availableLevel=normal：运行时弹一次授权框即可，不需要 AGC 审批。
+        // 必须写在 requestPermissions 里，否则 requestPermissionsFromUser 会被 ATM 判为
+        // 「未在 HAP 中申请」（日志：Can not find permission ... from request permission）。
+        "name": "ohos.permission.READ_CALENDAR",
+        "reason": "$string:calendar_reason",
+        "usedScene": {
+          "abilities": ["EntryAbility"],
+          "when": "inuse"
+        }
+      },
+      {
+        "name": "ohos.permission.WRITE_CALENDAR",
+        "reason": "$string:calendar_reason",
+        "usedScene": {
+          "abilities": ["EntryAbility"],
+          "when": "inuse"
+        }
       }
     ]
   }

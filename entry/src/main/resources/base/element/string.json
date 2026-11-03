@@ -59,6 +59,10 @@
     {
       "name": "card_today_image_desc",
       "value": "NASA 每日天文图"
+    },
+    {
+      "name": "calendar_reason",
+      "value": "用于把发射提醒写进系统日历，在发射前 30 分钟通知你"
     }
   ]
 }

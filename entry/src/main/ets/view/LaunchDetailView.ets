@@ -113,6 +113,7 @@ import {
   ArticleNavParam
 } from '../routes/NavParam';
 import { FavItem, favInit, favHas, favToggle } from '../data/Favorites';
+import { RemindTarget, remindInit, remindHas, remindToggle } from '../data/Reminders';
 import { common } from '@kit.AbilityKit';
 
 const DOMAIN: number = 0x0000;
@@ -643,6 +644,14 @@ export struct LaunchDetailView {
   /** 是否已收藏本页这条发射。顶栏星标与发射时刻卡里的「收藏」胶囊共用它 */
   @State faved: boolean = false;
 
+  /**
+   * 是否已为本页这条发射设置了提醒。三枚胶囊里的「提醒」读它。
+   *
+   * 与收藏分开存：收藏是「我关心这条」，提醒是「到点叫我」——
+   * 两者可以只选一个，不该共用一个开关。
+   */
+  @State remindOn: boolean = false;
+
   /** 已经解析过时间线的发射 id；同一条发射不重复解析 */
   private tlIdCache: string = '';
 
@@ -665,16 +674,23 @@ export struct LaunchDetailView {
     const ctx: common.Context | undefined = this.getUIContext().getHostContext();
     if (ctx !== undefined) {
       favInit(ctx);
+      remindInit(ctx);
     }
     // 读一次收藏状态。必须在 loadDetail 之前也无妨 —— 它只看 id，
     // 而 id 来自路由入参，不依赖数据是否已加载
     this.syncFaved();
+    this.syncRemind();
     this.loadDetail();
   }
 
   /** 从存储层同步一次星标状态。 */
   private syncFaved(): void {
     this.faved = favHas(this.idText());
+  }
+
+  /** 从存储层同步一次提醒状态。 */
+  private syncRemind(): void {
+    this.remindOn = remindHas(this.idText());
   }
 
   /**
@@ -720,6 +736,42 @@ export struct LaunchDetailView {
       message: msg,
       duration: 1500
     });
+  }
+
+  /**
+   * 提醒胶囊的点击。
+   *
+   * 走异步：publishReminder 是一次系统 IPC，同步等会卡住首帧。
+   * 成功才改界面状态 —— 失败（配额满 1700002 / 通知能力被关 1700001）
+   * 保持原样并 toast 出来，**不能先乐观置 true**，否则用户看到「已提醒」
+   * 但系统里什么都没有，比不提醒更坏。
+   */
+  private async onTapRemind(): Promise<void> {
+    const id: string = this.idText();
+    if (id.length === 0) {
+      return;
+    }
+    const target: RemindTarget = new RemindTarget(
+      id,
+      strOf(this.param.net).trim(),
+      this.missionName().length > 0 ? this.missionName() : this.titleText(),
+      this.rocketName()
+    );
+    // ctx 只有 View 拿得到（UIContext 的 HostContext），存储层不去猜；
+    // 日历授权与 getCalendarManager 都吃它。
+    const ctx: common.Context | undefined = this.getUIContext().getHostContext();
+    if (ctx === undefined) {
+      this.toast('存储未就绪，请稍后重试');
+      return;
+    }
+    const now: boolean = await remindToggle(ctx, target);
+    this.remindOn = now;
+    if (now) {
+      this.toast('已加入日历，发射前 30 分钟提醒');
+    } else {
+      // 两种失败都走到这里：取消成功，或设置失败。用当前状态区分文案。
+      this.toast(remindHas(id) ? '设置提醒失败，请检查日历权限' : '已取消提醒');
+    }
   }
 
   // ============ 加载 ============
@@ -2403,18 +2455,18 @@ export struct LaunchDetailView {
         .alignItems(HorizontalAlign.Center)
         .justifyContent(FlexAlign.End)
 
-        Text('提醒')
+        Text(this.remindOn ? '已提醒' : '提醒')
           .fontSize(12)
           .fontColor(ACCENT)
           .margin({ left: 4 })
       }
       .padding({ left: 5, right: 5, top: 2, bottom: 2 })
       .borderRadius(20)
-      .backgroundColor('#1A38BDF8')
-      .border({ width: 1, color: '#4738BDF8' })
+      .backgroundColor(this.remindOn ? '#3338BDF8' : '#1A38BDF8')
+      .border({ width: 1, color: this.remindOn ? '#8038BDF8' : '#4738BDF8' })
       .margin({ left: 10 })
       .onClick(() => {
-        this.toast('提醒功能开发中');
+        this.onTapRemind();
       })
     }
     .alignItems(VerticalAlign.Center)
