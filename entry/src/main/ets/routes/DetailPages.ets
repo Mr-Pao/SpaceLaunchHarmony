@@ -14,7 +14,7 @@
  */
 
 import { Nav } from './Nav';
-import { LaunchNavParam, PhotoNavParam, RocketNavParam, ArticleNavParam, AstronautNavParam, SearchNavParam, VideoNavParam, AgencyNavParam, PadNavParam, EventNavParam, StationNavParam, ExpeditionNavParam } from './NavParam';
+import { LaunchNavParam, PhotoNavParam, RocketNavParam, ArticleNavParam, AstronautNavParam, SearchNavParam, VideoNavParam, AgencyNavParam, PadNavParam, EventNavParam, StationNavParam, ExpeditionNavParam , MediaNavParam } from './NavParam';
 import { RocketDetailView } from '../view/RocketDetailView';
 import { PhotoDetailView } from '../view/PhotoDetailView';
 import { LaunchDetailView } from '../view/LaunchDetailView';
@@ -29,6 +29,7 @@ import { AstronautView } from '../view/AstronautView';
 import { SearchView } from '../view/SearchView';
 import { VideoGalleryView } from '../view/VideoGalleryView';
 import { AgencyView } from '../view/AgencyView';
+import { MediaView } from '../view/MediaView';
 import { PadView } from '../view/PadView';
 import { EvItem } from '../model/Event';
 import { StationsView } from '../view/StationsView';
@@ -517,6 +518,30 @@ export function EventPage(name: string, param: object) {
 export function VersionPage(name: string) {
   NavDestination() {
     VersionView()
+  }
+  .hideTitleBar(true)
+  .backgroundColor(BG)
+  .onShown(() => {
+    Nav.markDetailShown();
+  })
+  .onHidden(() => {
+    Nav.markDetailHidden();
+  })
+}
+
+/**
+ * 型号媒体库（图片库 / 视频库）。
+ *
+ * 小程序是从 launch-hero / rocket.vue 的 goMedia(tab) 压栈，传 config.id；
+ * 鸿蒙侧统一传型号名，由 MediaView 回 launchers 里定位构型。
+ */
+@Builder
+export function MediaPage(name: string, param: object) {
+  NavDestination() {
+    MediaView({
+      configName: (param as MediaNavParam).name,
+      startTab: (param as MediaNavParam).tab
+    })
   }
   .hideTitleBar(true)
   .backgroundColor(BG)

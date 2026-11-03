@@ -1460,9 +1460,20 @@ export struct RocketDetailView {
     Nav.pushPhoto(new PhotoNavParam(url, this.titleText()));
   }
 
-  /** 「图片库 N」入口：鸿蒙侧 media 页未做，先落视频库（见取舍 8） */
+  /**
+   * 「图片库 N」入口 → 型号媒体库的图片库分页。
+   *
+   * 小程序会带 tab（图片库 / 视频库两个入口），鸿蒙侧把两个入口合成一个：
+   * hero 上那颗胶囊默认落图片库，用户进去自己切 —— 省一颗胶囊，行为一致。
+   * 入参用型号英文原名（launchers 的 name），因为 MediaView 靠它回 launchers 找构型。
+   */
   private goMedia(): void {
-    Nav.pushVideos('');
+    const cur: RkLauncher | null = this.curOrNull();
+    const name: string = cur === null ? '' : strOf(this.configOf(cur).name).trim();
+    if (name.length === 0) {
+      return;
+    }
+    Nav.pushMedia(name, 0);
   }
 
   /** 制造方面包屑 → 机构页。只带名字，AgencyView 自己按 id → 名字匹配（见取舍 9） */

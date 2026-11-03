@@ -43,7 +43,9 @@ import { BusinessError } from '@kit.BasicServicesKit';
 import { repo, LoadOptions } from '../data/Repository';
 import { AgAgency, AgAgenciesPayload } from '../model/Agency';
 import { Nav } from '../routes/Nav';
-import { strOf, descText, descNeedFold } from '../utils/Format';
+import { RocketNavParam } from '../routes/NavParam';
+import { RocketConfig } from '../model/Common';
+import { rocketName, strOf, descText, descNeedFold } from '../utils/Format';
 
 const DOMAIN: number = 0x0000;
 const TAG: string = 'AgencyView';
@@ -75,6 +77,32 @@ const BOTTOM_PAD: number = 32;
 /** 简介折叠：4 行 + 120 字阈值（拿不到 Text 实际行数，只能按字符数粗判） */
 const DESC_FOLD_LINES: number = 4;
 const DESC_FOLD_CHARS: number = 120;
+
+/** 「该机构的火箭」折叠阈值（小程序 rkLimit = 8） */
+const RK_LIMIT: number = 8;
+
+/**
+ * variant 里的垃圾值。小程序是行内正则 /^(n\/a|none|null|unknown|-+)$/i，
+ * ArkTS 侧统一用 new RegExp + 'i' 标志（工程约定，见 Format.ets 的 VARIANT_SUFFIX_RE）。
+ * 注意写成两个反斜杠：这是字符串，不是字面量正则。
+ */
+const RK_JUNK_VARIANT: RegExp = new RegExp('^(n\\/a|none|null|unknown|-+)$', 'i');
+
+// ---- 火箭卡的视觉常量（小程序 wxss，rpx ÷ 2 = vp） ----
+/** .rk-item 背景 #0f1622 */
+const RK_ITEM_BG: string = '#0F1622';
+/** .rk-item 描边 rgba(255,255,255,.05) → 0x0D */
+const RK_ITEM_LINE: string = '#0DFFFFFF';
+/** .rk-dot 退役态 #39465c */
+const RK_DOT_OFF: string = '#39465C';
+/** .rk-name #dbe6f2 */
+const RK_NAME: string = '#DBE6F2';
+/** .rk-variant #5c6b82 */
+const RK_VARIANT: string = '#5C6B82';
+/** .rk-chevron 边框 #3f4d63 */
+const RK_CHEVRON: string = '#3F4D63';
+/** rgba(56,189,248,.7) → 0.7×255 ≈ 0xB3，用于在役圆点的辉光 */
+const RK_DOT_HALO: string = '#B338BDF8';
 
 /**
  * 国家/地区两位码 → 中文。
@@ -204,6 +232,53 @@ function agJoin(parts: string[]): string {
   return kept.join(' · ');
 }
 
+// ============ launchers 数据集的形状（本页只用 5 个字段） ============
+
+/**
+ * launchers.json 单条 —— 只声明本页用到的 5 个键。
+ *
+ * 为什么不 import 现成的：
+ *   view/RocketDetailView.ets 的 RkLauncher 和 components/RocketCard.ets 的
+ *   RtLauncherRaw 都是**整条 36 键**的完整快照，import 过来会把一份用不到的
+ *   类型和它的模块一起拖进来（RocketCard 还牵连 utils/Format 的整张榜单逻辑）。
+ *   ArkTS 禁止声明合并，重名即编译失败，所以本页另起 Ag2 前缀（全仓未占用）。
+ *
+ * 字段全部可选：launchers 里缺 manufacturer / maiden_flight 的条目很常见。
+ */
+interface Ag2Launcher {
+  id?: number | null;
+  name?: string;
+  variant?: string;
+  manufacturer?: string;
+  /** "2014-07-09"，缺失时按空串处理（排序要按它倒序） */
+  maiden_flight?: string;
+  active?: boolean;
+}
+
+/** launchers 数据集信封 */
+interface Ag2LauncherPayload {
+  count?: number;
+  list?: Ag2Launcher[];
+}
+
+/**
+ * 渲染用的一行（= 小程序 relatedRockets 里 map 出来的对象）。
+ *
+ * 必须做成 class 并 new：ArkTS 禁止无类型对象字面量。
+ */
+class Ag2RocketRow {
+  /** ForEach 的 key：id 缺失时退化用型号名 */
+  key: string = '';
+  /** 中文标题（rocketName 的返回值） */
+  title: string = '';
+  /** 副行构型；空串 = 不画这一行 */
+  variant: string = '';
+  /** 在役 → 圆点亮色 */
+  active: boolean = false;
+  /** 跳转用的型号英文名（RocketNavParam 唯一入参） */
+  navName: string = '';
+}
+
 @Component
 export struct AgencyView {
   /** LL2 agency id（number 的字符串形式）。空串表示只能按名字匹配 */
@@ -253,10 +328,30 @@ export struct AgencyView {
   /** 运载火箭标签（已按 '|' 切好） */
   @State launcherTags: string[] = [];
 
+  // ---- 「该机构的火箭」卡（对应小程序 relatedRockets / visibleRockets） ----
+  /** 命中该机构的全部型号，已排序（= relatedRockets 的结果） */
+  @State rocketRows: Ag2RocketRow[] = [];
+  /** 是否已展开全部（小程序 showAll） */
+  @State rocketsShowAll: boolean = false;
+
+  /**
+   * launchers 原始库（532 条）。
+   * 不做 @State：它不直接上屏，只是 rebuildRockets 的原料；
+   * 用 @State 会让每次回填都触发一次全页 diff。
+   */
+  private allLaunchers: Ag2Launcher[] = [];
+  /** 匹配键：机构名 + 缩写（小程序 keys = [name, abbrev]） */
+  private agMatchKeys: string[] = [];
+  /** 防重入：进页与重试都可能调用，别叠请求 */
+  private rocketsLoading: boolean = false;
+
   // ============ 生命周期 ============
 
   aboutToAppear(): void {
     this.loadAgency(false);
+    // 火箭卡的数据源是另一个数据集：**不 await、不挡页头**，机构档案先上屏，
+    // 命中后由 rebuildRockets 自己往 @State 里回填。
+    this.loadLaunchers(false);
     // 无定时器、无监听、无长连接，aboutToDisappear 无事可做，故不实现
   }
 
@@ -407,7 +502,188 @@ export struct AgencyView {
     // ---- 运载火箭：竖线串切标签，不反查 launchers 数据集 ----
     this.launcherTags = agLauncherTags(strOf(a.launchers));
 
+    // ---- 火箭卡：匹配键 = 机构名 + 缩写（与小程序 keys 同序） ----
+    const keys: string[] = [];
+    if (nm.length > 0) {
+      keys.push(nm);
+    }
+    if (abbrev.length > 0) {
+      keys.push(abbrev);
+    }
+    this.agMatchKeys = keys;
+    // 机构换了，先按新键重算一遍（此时 launchers 可能还没到，就是空数组）
+    this.rebuildRockets();
+    this.rocketsShowAll = false;
+
     this.found = true;
+  }
+
+  // ============ 加载：launchers（「该机构的火箭」卡的数据源） ============
+
+  /**
+   * 拉 launchers 并转成火箭卡的行。
+   *
+   * 三个必须遵守的点：
+   *   1. **不阻塞页头**：调用方不 await，且本方法在无缓存时静默等网络，
+   *      期间页面照常显示机构档案（卡片条件为 rocketRows.length > 0，天然不画）。
+   *   2. **onUpdate 回填**：缓存过期时 repo 会先给旧值再后台刷新，
+   *      不挂 onUpdate 就会永远停在那份旧数据上（工程踩过的坑）。
+   *   3. **失败不抛**：火箭卡是增强内容，网络失败就让卡片不出现，
+   *      绝不能因此把整页打成「网络异常」。
+   */
+  private loadLaunchers(force: boolean): void {
+    if (this.rocketsLoading) {
+      return;
+    }
+    this.rocketsLoading = true;
+
+    const cached: Ag2LauncherPayload | null = repo.peek<Ag2LauncherPayload>('launchers');
+    if (cached !== null) {
+      this.applyLaunchers(cached);
+    }
+
+    const opts: LoadOptions<Ag2LauncherPayload> = {
+      force: force,
+      onUpdate: (fresh: Ag2LauncherPayload) => {
+        this.applyLaunchers(fresh);
+      }
+    };
+
+    repo.load<Ag2LauncherPayload>('launchers', opts)
+      .then((data: Ag2LauncherPayload) => {
+        this.applyLaunchers(data);
+        this.rocketsLoading = false;
+      })
+      .catch((e: BusinessError) => {
+        this.rocketsLoading = false;
+        // 静默：这是「增强卡」，失败就当这家机构没有可展示的型号
+        hilog.warn(DOMAIN, TAG, 'launchers 加载失败: %{public}s', e.message);
+      });
+  }
+
+  private applyLaunchers(data: Ag2LauncherPayload): void {
+    // 与 listOf 同样的写法：接口里 list 是可选的，先落一个显式可空局部变量再判空
+    const maybe: Ag2Launcher[] | undefined = data.list;
+    const list: Ag2Launcher[] = maybe !== undefined ? maybe : [];
+    if (list.length === 0) {
+      return;
+    }
+    this.allLaunchers = list;
+    this.rebuildRockets();
+  }
+
+  /**
+   * 重算命中该机构的型号（对位小程序 computed relatedRockets）。
+   *
+   * 三级口径逐条对拍：
+   *   filter：manufacturer 为空 → 直接淘汰；否则 keys.some(k => m === k || m.indexOf(k) !== -1)
+   *   sort  ：在役优先（!!active 不等时，active 的排前），同状态按 maiden_flight **倒序**
+   *   map   ：rocketName 出中文名；中文名与原名不同（已翻译）就不显示构型副行；
+   *           构型是垃圾值 / 与型号名互相包含时同样不显示。
+   */
+  private rebuildRockets(): void {
+    const keys: string[] = this.agMatchKeys;
+    if (keys.length === 0 || this.allLaunchers.length === 0) {
+      this.rocketRows = [];
+      return;
+    }
+
+    const hit: Ag2Launcher[] = this.allLaunchers.filter((x: Ag2Launcher) => {
+      const m: string = strOf(x.manufacturer);
+      if (m.length === 0) {
+        return false;
+      }
+      let ok: boolean = false;
+      for (let i = 0; i < keys.length; i++) {
+        const k: string = keys[i];
+        if (m === k || m.indexOf(k) !== -1) {
+          ok = true;
+          break;
+        }
+      }
+      return ok;
+    });
+
+    hit.sort((p: Ag2Launcher, q: Ag2Launcher) => {
+      const pa: boolean = p.active === true;
+      const qa: boolean = q.active === true;
+      if (pa !== qa) {
+        return pa ? -1 : 1;
+      }
+      // 小程序用 localeCompare 倒序，这里退回 < / > 比较：maiden_flight 是
+      // "YYYY-MM-DD" 定长串，字典序与时间序一致，不需要 locale 支持。
+      const pd: string = strOf(p.maiden_flight);
+      const qd: string = strOf(q.maiden_flight);
+      if (pd === qd) {
+        return 0;
+      }
+      return pd < qd ? 1 : -1;
+    });
+
+    const rows: Ag2RocketRow[] = [];
+    for (let i = 0; i < hit.length; i++) {
+      const x: Ag2Launcher = hit[i];
+      // 原值留给 translated 比较（小程序是 zh !== x.name，未 trim），
+      // trim 后的一份只用于跳转与退化 key
+      const rawName: string = strOf(x.name);
+      const nameTrim: string = rawName.trim();
+
+      // 只填 name（小程序就是 rocketName({ name: x.name })）：
+      // 带上 full_name 会改变查表候选顺序，中文名可能与小程不同
+      const cfg: RocketConfig = {
+        id: x.id !== undefined ? x.id : null,
+        name: rawName
+      };
+      const zh: string = rocketName(cfg);
+      // 与小程序一致：直接用 rocketName 的返回值，未翻译时它就是 x.name 原样。
+      // 兜底也用 rawName 而非 nameTrim —— 否则「原名带首尾空格」会被误判成已翻译，
+      // 进而把本该显示的构型副行吃掉。
+      const title: string = zh.length > 0 ? zh : rawName;
+      const translated: boolean = title !== rawName;
+
+      const v: string = strOf(x.variant).trim();
+      const junk: boolean = v.length === 0 || RK_JUNK_VARIANT.test(v);
+      const showVariant: boolean = !translated && !junk && v !== rawName
+        && rawName.indexOf(v) === -1 && v.indexOf(rawName) === -1;
+
+      const row: Ag2RocketRow = new Ag2RocketRow();
+      const idNum: number | null | undefined = x.id;
+      row.key = idNum !== undefined && idNum !== null ? String(idNum) : nameTrim;
+      row.title = title;
+      row.variant = showVariant ? v : '';
+      row.active = x.active === true;
+      // 跳转必须用**原始英文名**：RocketDetailView 按 name / full_name 定位型号，
+      // 传中文名会匹配不到（RocketNavParam 只有 name 一个字段，也没有 id 可用）。
+      row.navName = nameTrim;
+      rows.push(row);
+    }
+    this.rocketRows = rows;
+  }
+
+  /** 当前要画的几行：未展开时截断到 RK_LIMIT（= 小程序 visibleRockets） */
+  private visibleRockets(): Ag2RocketRow[] {
+    if (this.rocketsShowAll) {
+      return this.rocketRows;
+    }
+    return this.rocketRows.slice(0, RK_LIMIT);
+  }
+
+  /** 折叠按钮是否出现：命中数超过阈值才需要「展开全部 N 型」 */
+  private canToggleRockets(): boolean {
+    return this.rocketRows.length > RK_LIMIT;
+  }
+
+  private toggleRockets(): void {
+    this.rocketsShowAll = !this.rocketsShowAll;
+  }
+
+  /** 点整行 → 火箭详情（小程序 goRocket(r.id)，这里改传型号名） */
+  private goRocket(navName: string): void {
+    const nm: string = strOf(navName).trim();
+    if (nm.length === 0) {
+      return;
+    }
+    Nav.pushRocket(new RocketNavParam(nm));
   }
 
   // ============ 交互 ============
@@ -731,6 +1007,139 @@ export struct AgencyView {
     .margin({ top: CARD_GAP })
   }
 
+  // ============ UI：该机构的火箭（对应小程序 rk-grid） ============
+
+  /**
+   * 一行型号：状态圆点 + 型号名（+ 构型副行）+ › 箭头。
+   *
+   * 为什么 arrow 用 CSS 画而不是字符 '›'：小程序 wxss 里就这么做的，
+   * 注释写明「部分安卓机把 › 渲染成方块」。这里同理用两条边框旋转 45°。
+   *
+   * ⚠ 这是**带参** @Builder，按值传入的 row 不建立响应式依赖 ——
+   * 所以真正的「变」全靠外层 rocketRows 这个 @State 换数组来驱动重建，
+   * 卡片标题里的计数也是无参 builder 直读 this，见 rocketCard()。
+   */
+  @Builder
+  rocketRow(row: Ag2RocketRow) {
+    Row() {
+      // 在役亮、退役暗；在役带一层辉光（小程序 box-shadow 0 0 8rpx）
+      Circle({ width: 6, height: 6 })
+        .fill(row.active ? ACCENT : RK_DOT_OFF)
+        .margin({ right: 7 })
+        // 退役时用全透明色而不是去掉 shadow：属性链里不能写 if，
+        // 三元只放在 color 一个字段上，避免两个对象字面量参与类型推断
+        .shadow({ radius: 4, color: row.active ? RK_DOT_HALO : '#00000000', offsetX: 0, offsetY: 0 })
+
+      Column() {
+        Text(row.title)
+          .fontSize(13)
+          .fontColor(RK_NAME)
+          .lineHeight(18)
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .width('100%')
+        if (row.variant.length > 0) {
+          Text(row.variant)
+            .fontSize(10.5)
+            .fontColor(RK_VARIANT)
+            .lineHeight(14)
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .width('100%')
+            .margin({ top: 1 })
+        }
+      }
+      .layoutWeight(1)
+      .alignItems(HorizontalAlign.Start)
+
+      // 6×6 的方块，只留右边和下边，旋转 45° 就是一个 ›
+      Row()
+        .width(6)
+        .height(6)
+        .border({ width: { right: 1, bottom: 1 }, color: RK_CHEVRON })
+        .rotate({ angle: 45 })
+        .margin({ left: 5 })
+    }
+    .width('100%')
+    .alignItems(VerticalAlign.Center)
+    .constraintSize({ minHeight: 48 })
+    .padding({ left: 9, right: 9, top: 8, bottom: 8 })
+    .backgroundColor(RK_ITEM_BG)
+    .border({ width: 1, color: RK_ITEM_LINE })
+    .borderRadius(7)
+    .margin({ bottom: 7 })
+    .onClick(() => {
+      this.goRocket(row.navName);
+    })
+  }
+
+  /**
+   * 「该机构的火箭」卡。
+   *
+   * 标题与计数必须写在**无参** @Builder 里直读 this.rocketRows ——
+   * 按值传参的 @Builder 不建立响应式依赖，传个 number 进来刷新时不会更新。
+   *
+   * 布局：小程序是 48.5% 双列（rk-grid），鸿蒙这里改单列竖排 ——
+   * 中文型号名 + 构型副行在 48.5% 宽度里会被截断得很厉害（如「长征五号 遥二」），
+   * 单列能让 13vp 的正文字号完整放下，与工程其它列表卡（发射记录）也一致。
+   */
+  @Builder
+  rocketCard() {
+    Column() {
+      Row() {
+        Text('该机构的火箭')
+          .fontSize(15)
+          .fontWeight(FontWeight.Bold)
+          .fontColor(TEXT_MAIN)
+        Blank()
+        Text(String(this.rocketRows.length) + ' 型')
+          .fontSize(11.5)
+          .fontColor(TEXT_DIM)
+      }
+      .width('100%')
+      .alignItems(VerticalAlign.Center)
+
+      Column() {
+        ForEach(this.visibleRockets(), (row: Ag2RocketRow) => {
+          this.rocketRow(row);
+        }, (row: Ag2RocketRow) => row.key)
+      }
+      .width('100%')
+      .alignItems(HorizontalAlign.Start)
+      .margin({ top: 10 })
+
+      if (this.canToggleRockets()) {
+        Row() {
+          Text(this.rocketsShowAll ? '收起' : '展开全部 ' + String(this.rocketRows.length) + ' 型')
+            .fontSize(12.5)
+            .fontColor(ACCENT)
+          // 小小的上下箭头，同样用边框画（旋转方向靠 .rotate 的负角）
+          Row()
+            .width(5)
+            .height(5)
+            .border({ width: { right: 1, bottom: 1 }, color: ACCENT })
+            .rotate({ angle: this.rocketsShowAll ? -135 : 45 })
+            .margin({ left: 5 })
+        }
+        .width('100%')
+        .justifyContent(FlexAlign.Center)
+        .alignItems(VerticalAlign.Center)
+        .padding({ top: 9 })
+        .margin({ top: 3 })
+        .border({ width: { top: 1 }, color: RK_ITEM_LINE })
+        .onClick(() => {
+          this.toggleRockets();
+        })
+      }
+    }
+    .width('100%')
+    .alignItems(HorizontalAlign.Start)
+    .padding(CARD_PAD)
+    .backgroundColor(CARD_BG)
+    .borderRadius(CARD_RADIUS)
+    .margin({ top: CARD_GAP })
+  }
+
   // ============ UI：页脚 ============
 
   @Builder
@@ -831,6 +1240,11 @@ export struct AgencyView {
               }
               if (this.launcherTags.length > 0) {
                 this.launcherCard()
+              }
+              // 小程序里这张卡在「基本信息」之后、页脚之前；launcherCard 是鸿蒙
+              // 独有的一块（小程序没有该卡），排在它后面不破坏小程序的信息次序
+              if (this.rocketRows.length > 0) {
+                this.rocketCard()
               }
               this.footerHint()
             }

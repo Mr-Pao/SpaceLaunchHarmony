@@ -13,7 +13,7 @@
  * 注意：这里只做「转发」，不做任何 UI。所有跳转最终都落在 NavPathStack 上。
  */
 
-import { LaunchNavParam, PhotoNavParam, RocketNavParam, ArticleNavParam, AstronautNavParam, AgencyNavParam, PadNavParam, VideoNavParam, SearchNavParam, StationNavParam, ExpeditionNavParam, EventNavParam } from './NavParam';
+import { LaunchNavParam, PhotoNavParam, RocketNavParam, ArticleNavParam, AstronautNavParam, AgencyNavParam, PadNavParam, VideoNavParam, SearchNavParam, StationNavParam, ExpeditionNavParam, EventNavParam, MediaNavParam } from './NavParam';
 
 /** 路由名常量 —— 与 Index.ets 的 PageMap 必须严格一致 */
 export const ROUTE_LAUNCH: string = 'launchDetail';
@@ -55,6 +55,8 @@ export const ROUTE_ASTRONAUT: string = 'astronautDetail';
 export const ROUTE_AGENCY: string = 'agencyDetail';
 export const ROUTE_PAD: string = 'padDetail';
 export const ROUTE_VIDEOS: string = 'videoGallery';
+/** 型号媒体库（图片库 / 视频库）。与 ROUTE_VIDEOS 不同：那个是全局视频列表，这个是按型号聚合 */
+export const ROUTE_MEDIA: string = 'mediaGallery';
 
 /** 全局搜索页。入参只有初始关键词，走 pushSearch */
 export const ROUTE_SEARCH: string = 'searchPage';
@@ -231,6 +233,20 @@ export class Nav {
   }
 
   /** 视频库。launchId 为空串 = 看全量 */
+  /**
+   * 打开型号媒体库。`tab` 0=图片库 1=视频库。
+   *
+   * 小程序是从 launch-hero / rocket.vue 的 goMedia(tab) 进，传 config.id；
+   * 鸿蒙侧全工程只有名字可用（RocketNavParam 也只有 name），故传名字。
+   */
+  static pushMedia(name: string, tab: number): void {
+    const stack: NavPathStack | null = Nav.current;
+    if (stack === null) {
+      return;
+    }
+    stack.pushPathByName(ROUTE_MEDIA, new MediaNavParam(name, tab));
+  }
+
   static pushVideos(launchId: string): void {
     const stack: NavPathStack | null = Nav.current;
     if (stack === null) {

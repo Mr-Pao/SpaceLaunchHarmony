@@ -1183,9 +1183,22 @@ export struct LaunchDetailView {
     Nav.pushPhoto(new PhotoNavParam(url, this.titleText()));
   }
 
-  /** 图片库入口：鸿蒙侧没有 media 页，用已有的视频库顶上（取舍见文件头第 5 条） */
+  /**
+   * 图片库入口 → 型号媒体库。
+   *
+   * 小程序 goMedia(tab) 传的是 rocket.configuration.id；鸿蒙侧只能传名字，
+   * MediaView 会拿它回 launchers 里按 name / full_name 定位构型。
+   * 名字取 `configuration.name`（英文原名），不用 rocketName() 的中文译名 ——
+   * 中文名在 launchers 里查不到。
+   */
   private goMedia(): void {
-    Nav.pushVideos('');
+    const rk: LaunchRocket | undefined = this.item.rocket;
+    const cfg: RocketConfig | undefined = rk !== undefined ? rk.configuration : undefined;
+    const name: string = cfg !== undefined ? strOf(cfg.name).trim() : '';
+    if (name.length === 0) {
+      return;
+    }
+    Nav.pushMedia(name, 0);
   }
 
   // ============ 顶栏滚动状态 ============

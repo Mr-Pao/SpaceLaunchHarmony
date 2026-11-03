@@ -63,6 +63,25 @@ export class PhotoNavParam {
   }
 }
 
+/**
+ * 型号媒体库入参（图片库 / 视频库）。
+ *
+ * 小程序 media.vue 的入口传的是 LL2 的 config.id（数字），但鸿蒙侧
+ * RocketNavParam 只有 name、AgencyView 拿到的也是名字，所以这里统一用型号名，
+ * MediaView 内部再回到 launchers 里按名字找构型 —— 与 RocketDetailView 同一口径。
+ */
+export class MediaNavParam {
+  /** 型号英文原名（launchers 的 name，不是中文译名） */
+  name: string = '';
+  /** 0 = 图片库，1 = 视频库（对位小程序 goMedia(tab) 的 tab 参数） */
+  tab: number = 0;
+
+  constructor(name: string, tab: number) {
+    this.name = name;
+    this.tab = tab;
+  }
+}
+
 /** 火箭详情页入参 */
 export class RocketNavParam {
   /** 火箭名（LL2 rocket.configuration.name，如 "Falcon 9"） */

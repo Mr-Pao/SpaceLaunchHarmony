@@ -33,9 +33,9 @@ import { GalleryView } from '../view/GalleryView';
 import { RocketView } from '../view/RocketView';
 import { MineView } from '../view/MineView';
 import { FloatingTabBar } from '../components/FloatingTabBar';
-import { Nav, ROUTE_LAUNCH, ROUTE_PHOTO, ROUTE_ROCKET, ROUTE_ARTICLE, ROUTE_NEWSLIST, ROUTE_STATS, ROUTE_ASSETS, ROUTE_NEO, ROUTE_EVENTS, ROUTE_FAVORITES, NAV_DETAIL_DEPTH_KEY, ROUTE_ASTRONAUT, ROUTE_SEARCH, ROUTE_VIDEOS, ROUTE_STATIONS, ROUTE_STATION, ROUTE_EXPEDITION, ROUTE_EVENT, ROUTE_VERSION, ROUTE_AGENCY, ROUTE_PAD } from '../routes/Nav';
-import { LaunchDetailPage, PhotoDetailPage, RocketDetailPage, ArticleDetailPage, NewsListPage, StatsPage, AssetsPage, NeoPage, EventsPage, FavoritesPage, AstronautPage, SearchPage, VideoGalleryPage, StationsPage, StationPage, ExpeditionPage, EventPage, VersionPage, AgencyPage, PadPage } from '../routes/DetailPages';
-import { LaunchNavParam, PhotoNavParam, RocketNavParam, ArticleNavParam, AstronautNavParam, SearchNavParam, VideoNavParam, StationNavParam, ExpeditionNavParam, EventNavParam, AgencyNavParam, PadNavParam } from '../routes/NavParam';
+import { Nav, ROUTE_LAUNCH, ROUTE_PHOTO, ROUTE_ROCKET, ROUTE_ARTICLE, ROUTE_NEWSLIST, ROUTE_STATS, ROUTE_ASSETS, ROUTE_NEO, ROUTE_EVENTS, ROUTE_FAVORITES, NAV_DETAIL_DEPTH_KEY, ROUTE_ASTRONAUT, ROUTE_SEARCH, ROUTE_VIDEOS, ROUTE_STATIONS, ROUTE_STATION, ROUTE_EXPEDITION, ROUTE_EVENT, ROUTE_VERSION, ROUTE_AGENCY, ROUTE_PAD, ROUTE_MEDIA } from '../routes/Nav';
+import { LaunchDetailPage, PhotoDetailPage, RocketDetailPage, ArticleDetailPage, NewsListPage, StatsPage, AssetsPage, NeoPage, EventsPage, FavoritesPage, AstronautPage, SearchPage, VideoGalleryPage, StationsPage, StationPage, ExpeditionPage, EventPage, VersionPage, AgencyPage, PadPage, MediaPage } from '../routes/DetailPages';
+import { LaunchNavParam, PhotoNavParam, RocketNavParam, ArticleNavParam, AstronautNavParam, SearchNavParam, VideoNavParam, StationNavParam, ExpeditionNavParam, EventNavParam, AgencyNavParam, PadNavParam, MediaNavParam } from '../routes/NavParam';
 
 @Entry
 @Component
@@ -167,6 +167,8 @@ struct Index {
       PadPage(name, param as PadNavParam)
     } else if (name === ROUTE_VIDEOS) {
       VideoGalleryPage(name, param as VideoNavParam)
+    } else if (name === ROUTE_MEDIA) {
+      MediaPage(name, param as MediaNavParam)
     } else if (name === ROUTE_SEARCH) {
       SearchPage(name, param as SearchNavParam)
     } else if (name === ROUTE_VERSION) {
