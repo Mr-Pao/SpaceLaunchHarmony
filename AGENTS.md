@@ -57,6 +57,14 @@ export PATH="$DS/jbr/bin:$DS/tools/node:$PATH"
   被调函数要自己也是泛型 `<T>`，内部 `fresh as Object as T`。
 - **`Date` 相减不是合法运算**，用 `getTime()` 或自写 `parseTime` 返回 number。
 - 优先 `async/await`，不要依赖 `Promise.finally()`。
+- **成员名不能与同名方法共存**（`Duplicate identifier`）：`@State agencyLogo: string` 又写
+  `private agencyLogo(): string` 会报错，方法改名 `agencyLogoOf()`。
+- **属性方法不存在时的正确替代**（2026-11-03 实测，三条都是硬报错）：
+  | 想写 | 报错 | 改用 |
+  |---|---|---|
+  | `Row().flexWrap(...)` | `Property 'flexWrap' does not exist on RowAttribute` | `Flex({ wrap: FlexWrap.Wrap })` |
+  | `Text().maxWidth('70%')` | `Property 'maxWidth' does not exist on TextAttribute` | `.width('70%').textAlign(TextAlign.End)` |
+  | `Column().overflow(Overflow.Hidden)` | 同上，且 `Overflow` 不在作用域 | `.clip(true)` |
 
 ## 五、缓存与网络设计（照小程序 `utils/data.js` 翻译）
 
@@ -87,6 +95,16 @@ export PATH="$DS/jbr/bin:$DS/tools/node:$PATH"
 - 大列表用 `List` + `LazyForEach` + `IDataSource`，`.cachedCount(3)`。
   两万条卫星数据放普通成员变量（**非 `@State`**），只把 `version`/`count` 挂 `@State`。
 - **不要用 `AppStorage` 承载大数据集**（全局广播 + 响应式代理开销）。
+- **`@Builder` 按值传参不建立响应式依赖**（本工程踩过两次，修了两轮才修对）：
+  `this.statCell('运力之最', this.topLeoName, ...)` 里 `statGrid` 的依赖集**不含** `topLeoName`，
+  异步赋值后不重绘，界面永远停在初值。**修法：随 @State 变化的文字必须写在无参 `@Builder` 里、
+  在内部直接读 `this.xxx`**。只把外层改无参、内层仍带参传值，依然不刷新（第二层坑）。
+- **无高父容器里的 `height('100%')` 会回溯到整屏**：`Stack` 由子节点撑开，卡片内放一个
+  `.height('100%')` 的径向光层，会把整张卡撑成满屏。要么给父容器显式 `.height(N)`，
+  要么让孩子用 `layoutWeight`。
+- **`Stack` 里的遮罩要贴底必须包一层**：`Stack({alignContent: Alignment.TopStart})` 直接放
+  70vp 的渐变遮罩会贴到**顶部**（把图上半压暗成灰带）。包一层满高
+  `Column(){}.height(H).justifyContent(FlexAlign.End).hitTestBehavior(HitTestMode.None)` 才贴底。
 
 ## 七、进度（2026-11-03 02:20 更新）
 
@@ -152,3 +170,16 @@ export PATH="$DS/jbr/bin:$DS/tools/node:$PATH"
   所以开发期完全不用配签名。
 - **OneDrive 同步会锁 `entry/build`**，编译报 `11204003 File Resource Error / Failed to delete ... No error`
   是锁冲突不是代码问题，`rm -rf entry/build` 重跑即可。
+- **对齐小程序（2026-11-03 的惨痛教训，占本轮工作量一半）**：五个 tab + 三个详情页第一版都被判
+  「这完全不一样」。根因是**凭着截图印象画**，没读 wxss 的具体数值。正确做法：
+  ① 先 `grep`/`sed` 把小程序对应 `.vue` 的 template + style **完整读一遍**；
+  ② 每条差异记 `rpx ÷ 2 = vp` 换算后的精确值（字体/间距/圆角/颜色）；
+  ③ 组件结构也要对（小程序发射列表是**横向紧凑卡** 100vp 方图 + 三行，不是竖向大图卡；
+  图库是**8 条横向漂移带**，不是瀑布流；火箭详情有**8 个区块**，不是 2 张卡）。
+  「看起来差不多」不等于对齐，用户一眼就能看出。
+- **审计要派只读子代理专门做**：让一个 agent 只读小程序与鸿蒙两侧、输出
+  `序号|位置|小程序实际|鸿蒙实际|差异类型|严重度` 表格（本轮 105 + 102 条），比主窗口自己翻快得多，
+  而且能避免「我改过一遍所以觉得没问题」的自我确认偏差。
+- **子代理会让实现超出小程序**（例：给航天员页加「靠远征队反推所属空间站」）。看着更全，
+  但与「逐页对齐」目标相反 —— 小程序那张卡因数据为空**永远不显示**，我们显示了就是不一致。
+  **数据空导致的「不显示」也是需要对齐的行为**。
