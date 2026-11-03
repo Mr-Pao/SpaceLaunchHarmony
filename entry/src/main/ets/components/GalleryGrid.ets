@@ -27,10 +27,16 @@
  *
  * ── 为什么位移是「算出来的半宽」而不是量出来的 ──
  *   CSS 的 translateX(-50%) 依赖 track 的 max-content 宽度。ArkUI 没有 max-content，
- *   所以给 Row 显式设宽 half × 2，位移量取 half：
+ *   所以给 Row（track）显式设宽 half × 2，位移量取 half：
  *     half = 每带张数 × (cell 宽 + 间距)
  *   数据侧把每条带的图**复制一份接在尾部**（首尾相接），位移到 -half 时画面与 0
  *   完全重合，回弹那一瞬看不出接缝 —— 这正是 CSS -50% 的语义。
+ *
+ * ── 为什么带是 Column、track 是里面那层 Row ──
+ *   wxss 的 `.band` 负责定高 + `overflow: hidden`，`.track` 负责 translate。
+ *   这两件事在 ArkUI 里必须拆成两层：clip 挂在带这一层，宽度是 100%（窄于屏幕），
+ *   translate 挂在里层 track（宽 half×2，远超屏幕）。若把 clip 和 translate 放同一层，
+ *   裁的就是 track 自己的大边界，等于没裁，图会横向漫出屏幕盖住相邻区域。
  *
  * ── 为什么图带里不画标题、不做破图占位 ──
  *   小程序 .cell 里只有 image + .cell-veil，没有任何文字；加了文字就不是 1:1 了。
