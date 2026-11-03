@@ -341,8 +341,12 @@ export struct NewsListView {
     if (refs !== undefined) {
       const keep: NewsLaunchRef[] = [];
       for (let i = 0; i < refs.length; i++) {
-        if (refs[i] !== undefined && strOf(refs[i].id).length > 0) {
-          keep.push(refs[i]);
+        // 先落到显式可空局部变量再判空：数组下标在 ArkTS 里的类型是 NewsLaunchRef
+        // （不是 | undefined），直接写 `refs[i] !== undefined` 会撞上
+        // 「两种类型没有重叠」的严格比较告警。
+        const one: NewsLaunchRef | undefined = refs[i];
+        if (one !== undefined && strOf(one.id).length > 0) {
+          keep.push(one);
         }
       }
       c.refs = keep;
