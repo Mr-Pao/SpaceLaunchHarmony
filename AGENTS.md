@@ -194,3 +194,40 @@ export PATH="$DS/jbr/bin:$DS/tools/node:$PATH"
 - **子代理会让实现超出小程序**（例：给航天员页加「靠远征队反推所属空间站」）。看着更全，
   但与「逐页对齐」目标相反 —— 小程序那张卡因数据为空**永远不显示**，我们显示了就是不一致。
   **数据空导致的「不显示」也是需要对齐的行为**。
+
+## 发射提醒（2026-11-03 落地，走系统日历而非代理提醒）
+
+- **两条路，只有一条能走通**：
+  - `reminderAgentManager.publishReminder`（`@kit.BackgroundTasksKit`）是「真·代理提醒」，
+    到期由系统弹通知，语义最贴「发射前叫我」。但实测 `code=1700002`，官方错误码文档原文：
+    **「因管控限制，普通应用如果没有代理提醒的使用权限，视为这个普通应用提醒数量上限为 0」**；
+    要拿到得在 **AGC 侧单独申请 + 用申请通过的正式 profile 签名** —— 属发布准备，不能卡功能。
+  - `CalendarKit`（`@kit.CalendarKit` → `@ohos.calendarManager`）对应小程序 `uni.addPhoneCalendar`，
+    只需 `READ_CALENDAR` + `WRITE_CALENDAR`（均 user_grant / availableLevel=normal），
+    运行时弹一次授权即可，改完系统日历里立刻可见。**当前实现走这条**。
+- **`entry/src/main/ets/data/Reminders.ets`**：`RemindStore` + 单例 `reminders`，
+  导出 `remindInit / remindList / remindCount / remindHas / remindToggle / remindRemove`。
+  key 沿用小程序同名 `reminded_launches`，另存 `reminded_ids` 做 `launchId → 日历事件 id` 映射
+  （取消时只有事件 id 能删）。`MAX_REMIND = 60`。`bumpVersion()` 复用 `FAV_VERSION_KEY`。
+- **三个必踩的权限/账户坑（都已修，别回退）**：
+  1. 权限必须写进 `module.json5` 的 `requestPermissions`，否则 `requestPermissionsFromUser` 会被
+     ATM 直接判「未在 HAP 中申请」（日志 `Can not find permission ... from request permission`）。
+  2. **`getCalendar(account)` 查的是 `READ_CALENDAR`**（d.ts `@permission ohos.permission.READ_CALENDAR`），
+     只申 WRITE 会在这一句报 `code=201`。两个都要申。
+  3. **`getCalendar(account)` 不会自动建账户**，首次调用报 `23900003 The specified account was not found`。
+     正确姿势是「先 `getCalendar` → 取不到再 `createCalendar`」（create 也要 WRITE_CALENDAR）。
+     反过来直接 create 也不行：账户已存在时会报错。
+- **事件语义**：`startTime` 就是发射时刻，提前量交给 `Event.reminderTime: [30]`（单位分钟、
+  表示「事件开始前 N 分钟」），与小程序 `alarm: true` + `alarmOffset` 同一套。
+  发射已过点（不足 1 分钟）→ 事件放 1 分钟后且 `reminderTime: []`，不留提醒。
+  `endTime` 必须 > `startTime`，给 0 时长会被拒，这里固定 +30 分钟。
+- **不往用户现有日历里塞事件**：自建账户 `name: 'SpaceLaunch'` / `type: CalendarType.LOCAL` /
+  `displayName: '航天发射提醒'`。好处是取消只删自己账号下的事件，绝不误删用户日程，
+  且用户可以整块删掉这个日历。
+- **`PermissionRequestResult` 不在 `abilityAccessCtrl` 命名空间下**，要从 `@kit.AbilityKit` 具名导入，
+  写 `abilityAccessCtrl.PermissionRequestResult` 会报 `has no exported member`。
+- **失败不乐观置 true**：`publishReminder` / `addEvent` 都是异步 IPC，成功才改 `@State remindOn`，
+  否则用户看到「已提醒」但系统里什么都没有，比不提醒更坏。
+- 实机验证链路（模拟器）：详情页点提醒 → 授权弹窗「允许"航天发射"读取和修改此应用的日程？」→
+  胶囊变「已提醒」→ 系统日历当天出现「发射：<任务名>」（来源显示「航天发射」）→
+  「我的」页「我的提醒 1 条」并可点进详情。
