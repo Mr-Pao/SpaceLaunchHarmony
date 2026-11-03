@@ -82,6 +82,17 @@ export PATH="$DS/jbr/bin:$DS/tools/node:$PATH"
 - 权限：`ohos.permission.INTERNET` 在 `module.json5` 的 `requestPermissions`，
   **system_grant，安装即授予**。忘了加的症状是 `2300007 连接失败`，不是明确的权限错误，极易误判。
 
+### 字段契约的六个坑（2026-11-03 三页对齐时逐个实测，写代码前先看这张表）
+
+| 你以为有 | 实际 | 怎么办 |
+|---|---|---|
+| `LaunchPad.id` | **没有**。`slim.js:145` 的 pad 只有 name/lat/lon/image/imageThumb/imageCredit/imageName/map_image/total_launch_count/location | `PaNavParam` 传空 id + name + place，`PadView.findIn()` 做三轮匹配 |
+| `LaunchProvider.logo_url` | **没有**，只有 `id` + `name` | logo 要从 `agencies.json` 的 `logo_url` 二次匹配（异步二段） |
+| `RocketBrief.height` | **没有**，只有 `length` | 参数行写「长度」，别写「高度」 |
+| `flagSrc('China')` | 返回**国旗 emoji**，不是图片 URL（`flagOf` 的别名） | 当 `Text` 画，不能 `Image(...)` |
+| `utils/Media.ets` 有 `collectMedia()` | **没有**，只有 `fullImageOf` / `thumbOf` | 图片库 N 张的口径做不出小程序那个（它聚合构型图+发射实拍+工位图+信息图再去重，`MAX_IMAGES=60`） |
+| `LaunchSummary.vid` | 线上 v14 **已无此字段**（旧 dist v11 有） | 媒体页动工前先确认，别当它存在 |
+
 ## 六、UI 约定
 
 - 主题色 **天蓝 `#38BDF8`**（来源：小程序 `pages.json` tabBar `selectedColor`，全库 110 次命中）。

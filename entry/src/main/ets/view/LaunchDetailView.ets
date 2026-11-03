@@ -1,40 +1,69 @@
 /**
- * view/LaunchDetailView.ets —— 发射详情页（对位小程序 components/launch-detail/launch-content.vue）
+ * view/LaunchDetailView.ets —— 发射详情页（对位小程序 components/launch-detail/*）
  *
  * 为什么要有这个文件：
- *   routes/DetailPages.ets 里的三个详情页都是全局 @Builder，而 @Builder 不是组件、
+ *   routes/DetailPages.ets 里的详情页是全局 @Builder，而 @Builder 不是组件、
  *   不能挂 @State。详情页要「先出缓存再后台刷新」、要「展开全文」、要倒计时，
  *   这些都必须有状态，所以真实内容整体搬进这个 @Component，
  *   @Builder 只留一层 `LaunchDetailView({ param: param })` 的包装。
  *
+ * 本轮（2026-11-03）按小程序原版整体重排了一遍，逐项对位关系写在各段注释里。
+ * 结构对照：
+ *   launchInfo.vue        → 本文件的 nav（滚动 200 变实色）与看图器开关
+ *   nav-bar.vue           → navBar()      固定透明顶栏 / 32vp 圆形返回 / 23vp 居中标题
+ *   launch-hero.vue       → heroBlock()   330vp 轮播 + 指示点 + 图片库胶囊
+ *   launch-photo.vue      → photoViewer() 全屏 #04060a 看图器
+ *   launch-content.vue    → headBlock / countdownCard / timelineCard / whenCard /
+ *                           winCard / missionCard / infoCard / rocketCard / craftCard /
+ *                           conditionCard / failCard / padCard / statCard / newsCard
+ *   launch-detail.vue     → loadingBlock / notFoundBlock / footerHint / body 的 -20vp 上提
+ *
  * 数据链路（与 TodayView / RocketDetailView 同口径：缓存先上屏，网络后补）：
  *   1. repo.findById<T>('upcoming' | 'previous' | 'upcomingMore', id)
- *      —— **同步、只读缓存、绝不发网络**，所以能同步出首屏；
+ *      —— 同步、只读缓存、绝不发网络，所以能同步出首屏；
  *        真实签名是 findById<T>(name: DatasetName, id: string): T | null，没有 net 参数。
- *   2. repo.load<DataSet>('upcoming' / 'previous', { onUpdate })
- *      —— 后台刷新，新数据到了才回填。
- *   3. repo.load<NewsPayload>('news') —— 首屏之后才发，不阻塞。
+ *   2. repo.load<DataSet>(name, { onUpdate }) —— 后台刷新，新数据到了才回填。
+ *   3. repo.load<NewsPayload>('news') / repo.load<AgAgenciesPayload>('agencies')
+ *      —— 首屏之后才发，不阻塞正文。
+ *   4. repo.findById<LdTimelineItem>('timelines', id) —— 只读缓存，不主动 load（见取舍 2）。
+ *
+ * 字段口径（实测，别按任务书里的旧写法改）：
+ *   · 发射时刻是 `net`（不是 window_start）；
+ *   · 任务名 `mission.nameZh || mission.name`；
+ *   · timelines 一条记录 = { id, name, net, at, items: [{ a, d, t, az?, z? }], craft }，
+ *     其中 `t` 是 **ISO 8601 时长串**（-PT38M / PT45S / P2H... / P0D / P1DT2H），不是秒数；
+ *   · craft 是航天器卡唯一的来源（timeline 与航天器由 CI 同一趟抓回）。
  *
  * 有意取舍（逐条写清，方便复核）：
  *   1. **不做「历史归档分片」反查**。小程序 findById 找不到会去 previous 的分片里翻，
  *      鸿蒙侧的 Repository 只有 chunk('gallery' | 'satellites')，没有发射归档分片，
- *      拿不到就老老实实显示「未找到该发射任务」，不假装加载中。
- *   2. **「发射周期」只查缓存、绝不主动 load**。timelines 是「一次发射一条」的大对象
- *      （items 几十条、还带 craft 的整段结构），而详情页绝大多数用户不看它；
+ *      拿不到就显示「未找到该发射任务」，不假装加载中。
+ *   2. **「发射周期」只查缓存、绝不主动 load**。timelines 是「一次发射一条」的大对象，
  *      为一条发射把整份 timelines.json 拉下来，等于用首屏流量换一张可看可不看的卡。
- *      所以只 repo.findById('timelines', id)：缓存命中就画，不命中整卡不显示。
  *      代价是首次进入（缓存里还没有 timelines）看不到这张卡 —— 认为可以接受。
- *   3. **「相关报道」行不可点**。资讯详情页（ROUTE_ARTICLE）还没在 Index.ets 的
- *      PageMap 里注册，硬点会 push 一个不存在的页面，所以只展示不可跳。
- *   4. **任务详情卡的显示条件是「描述或轨道或类型至少有一个」**。任务书说「描述为空
- *      整卡不显示」，但如果轨道标签有值、只是没写描述，把轨道信息一起藏掉反而丢信息；
- *      两者都空时整卡不出现，不出现空卡片。
- *   5. **参数格 / 统计格的值无效就整格不画**。0 在这份数据里大量存在
+ *   3. **首图轮播的「同系列」取自本机已缓存的发射快照**（upcoming / previous / upcomingMore
+ *      里 rocket.configuration 相同的那些条目的首图），**不额外下载 gallery**。
+ *      小程序走的是媒体页的 collectMedia（按型号 id 聚合 + 火箭图库），鸿蒙侧没有
+ *      utils/media 的 collectMedia，也没有「型号→图片」聚合接口；为了不为了首屏轮播
+ *      去拉整份 gallery 索引（那是图库 tab 的活），这里用已缓存的发射快照做同系列。
+ *      代价：没进过发射列表 / 图库时轮播只有一张 —— 不影响主体信息。
+ *   4. **首图点击分两种**：只有一张时 `Nav.pushPhoto`（2000px 原图，对位小程序
+ *      uni.previewImage）；多张时打开本页的全屏看图器（launch-photo 的对位实现，
+ *      一样是 2000px 原图 + 左滑切换 + 图片计数）。这样两条高清看图路径都成立。
+ *   5. **「图片库 N」胶囊跳到视频库**（Nav.pushVideos('')）。小程序跳的是 media 页的
+ *      图片 tab，鸿蒙侧没有 media 页；视频库是本工程已有的媒体聚合页，先顶上。
+ *   6. **参数格 / 统计格的值无效就整格不画**。0 在这份数据里大量存在
  *      （launch_mass、gto_capacity 经常是 0），拿 0 当有值会看到一屏「0」。
- *   6. **@State 只存一个 LaunchSummary**，派生值（参数格、统计格、窗口文案）每次
- *      build 现算。整体重新赋值可被 ArkUI 观察到，而拆成二十个 @State 反而容易漏同步。
+ *   7. **@State 只存一个 LaunchSummary**，派生值（参数格、统计格、窗口文案）每次
+ *      build 现算。整体重新赋值可被 ArkUI 观察到，拆成二十个 @State 反而容易漏同步。
+ *   8. **火箭卡不做整卡点击**。小程序整卡进型号页、机构行用 @click.stop 拦冒泡；
+ *      ArkUI 的 onClick 没有可靠的 stopPropagation，整卡可点会让点机构行时
+ *      连带跳一次型号页。所以可点区域收在卡标题行与缩略图/型号名这一块，
+ *      机构行独立可点 —— 两个跳转都成立，不会互相打架。
+ *   9. **本页不持有任何定时器**（轮播由 Swiper 内部驱动），所以没有 aboutToDisappear
+ *      需要清理的资源；将来加轮播计时/自动刷新，必须在这里补清理。
  *
- * ⚠ 本文件不使用 console.*，日志一律 hilog；不使用 AppStorage。
+ * ⚠ 本文件不使用 console.*，日志一律 hilog；不使用 AppStorage；不使用 any/unknown。
  */
 
 import { hilog } from '@kit.PerformanceAnalysisKit';
@@ -48,55 +77,95 @@ import {
   LaunchPad,
   PadLocation,
   LaunchRocket,
-  RocketBrief
+  RocketBrief,
+  RocketConfig,
+  LaunchProvider
 } from '../model/Common';
-import { NewsItem, NewsPayload } from '../model/News';
+import { NewsItem, NewsLaunchRef, NewsPayload } from '../model/News';
+import { AgAgency, AgAgenciesPayload } from '../model/Agency';
 import {
   strOf,
   parseTime,
-  toDate,
-  formatLaunchTime,
   relativeTime,
+  spanText,
   statusOf,
-  statusToneColor,
-  statusToneBg,
   orbitLabelOf,
-  rocketLabelOf
+  rocketLabelOf,
+  missionTypeName,
+  craftTypeName,
+  craftStatusName,
+  destName,
+  agencyLabel,
+  flagSrc,
+  clock,
+  longDate,
+  countryOf
 } from '../utils/Format';
+import { fullImageOf, thumbOf } from '../utils/Media';
 import { Countdown } from '../components/Countdown';
 import { Nav } from '../routes/Nav';
-import { PadNavParam } from '../routes/NavParam';
-import { LaunchNavParam, PhotoNavParam, RocketNavParam } from '../routes/NavParam';
+import {
+  LaunchNavParam,
+  PhotoNavParam,
+  RocketNavParam,
+  PadNavParam,
+  AgencyNavParam,
+  ArticleNavParam
+} from '../routes/NavParam';
 import { FavItem, favInit, favHas, favToggle } from '../data/Favorites';
 import { common } from '@kit.AbilityKit';
 
 const DOMAIN: number = 0x0000;
 const TAG: string = 'LaunchDetailView';
 
-// ============ 视觉常量（工程约定：底 #0A0E17 / 卡 #141A26 / 圆角 12 / 间距 10） ============
+// ============ 视觉常量 ============
+//
+// 全部按小程序 rpx ÷ 2 折算（750rpx 设计稿 → 375vp）：
+//   页面底 #0a0e17 / 卡片 #141a26 / 卡片圆角 20rpx=10vp 保持工程既有 12
+//   卡内边距 28rpx≈14 / 卡间距 14rpx≈7（工程既有 10）
+//   正文左右留白 32rpx=16
 
 const BG_PRIMARY: string = '#0A0E17';
 const CARD_BG: string = '#141A26';
 const CARD_RADIUS: number = 12;
 const CARD_PAD: number = 14;
 const CARD_GAP: number = 10;
-/** 详情页左右留白，与列表页 12 一致（比卡内 14 小，卡片才不会贴边） */
-const PAGE_PAD: number = 12;
-const HERO_H: number = 220;
-/** 详情页不在 tab 内，胶囊不显示 —— 底部只留 32，不用 92 */
+/** 详情页正文左右留白，对位 launch-detail.vue 的 .body padding 0 32rpx（=16vp） */
+const PAGE_PAD: number = 16;
+/** 首图高度：launch-hero.vue 的 660rpx */
+const HERO_H: number = 330;
+/** 详情页不在 tab 内，底部只留 32（不用给悬浮胶囊让位的 92） */
 const BOTTOM_PAD: number = 32;
+/** 顶栏高度：nav-bar.vue 的 .nav-inner height 44px */
+const NAV_H: number = 44;
+/** 滚动超过这个距离顶栏变实色（launchInfo.vue 的 200） */
+const NAV_SOLID_Y: number = 200;
+/** 正文上提，压住首图底部的渐隐带：.body margin-top -40rpx = -20vp */
+const BODY_LIFT: number = -20;
+/** 顶栏实色：rgba(10,14,23,.96) → alpha 0xF5 */
+const NAV_SOLID_BG: string = '#F50A0E17';
 
+/** 主文字 */
 const TEXT_MAIN: string = '#FFFFFF';
-const TEXT_SUB: string = '#A7B4C7';
-const TEXT_DIM: string = '#55617A';
+/** 正文 / 描述（launch-content.vue 的 #cbd5e0） */
+const TEXT_SUB: string = '#CBD5E0';
+/** 次要标签（#6b7891） */
+const TEXT_DIM: string = '#6B7891';
+/** 页脚（#3d4a5c） */
+const TEXT_FAINT: string = '#3D4A5C';
 const ACCENT: string = '#38BDF8';
-/** 收藏星亮色。与「我的」页虚线卡、收藏页保持一致 */
+/** 收藏星亮色，与「我的」页虚线卡、收藏页保持一致 */
 const STAR: string = '#F5C33B';
 const CHIP_BG: string = '#16222F';
 const CHIP_BORDER: string = '#22303F';
 const DIVIDER: string = '#1E2836';
 /** 图与卡的占位底：比 CARD_BG 亮一点，缺图时不会糊成一片黑 */
-const MEDIA_BG: string = '#0F1725';
+const MEDIA_BG: string = '#0F1621';
+/** 看图器底色（launch-photo.vue 的 .stage） */
+const OVERLAY_BG: string = '#04060A';
+/** 首图占位渐变（launch-hero.vue 的 .hero-placeholder） */
+const HERO_FROM: string = '#16233A';
+const HERO_TO: string = '#0D1420';
 
 /** 列表卡片同款空壳，给 @State 一个安全的初始值（LaunchCard.ets 同一写法） */
 const EMPTY_LAUNCH: LaunchSummary = { id: '', name: '', net: '' };
@@ -110,26 +179,15 @@ const DESC_FOLD_LIMIT: number = 120;
 const DESC_FOLD_LINES: number = 4;
 const DESC_OPEN_LINES: number = 100;
 
+/** 首图最多几张：5 张是首屏流量与「轮播」观感的折中（与小程序一致） */
+const HERO_MAX: number = 5;
+/** 时间线折叠态显示几步（小程序的 pickTimeline(..., 4)） */
+const TL_PICK: number = 4;
+
 // ============ 本文件私有的格式化小工具 ============
-// 为什么不塞进 utils/Format.ets：
-//   Format.ets 是「全工程共用」的口径，一旦加进去就得对所有页面负责（要不要改
-//   卡片文案、要不要跟着 CI 数据变）。下面这几个只在发射详情页用得上，
-//   而且口径来自小程序 utils/format.js 里详情页专用的那几条，
-//   留在本文件里改名、改文案都不会波及列表页。
-
-/** 两位补零。不用 padStart：老 SDK 的 ArkTS 标准库对 String.prototype 扩展不一致 */
-function ldPad(n: number): string {
-  return n < 10 ? '0' + n : '' + n;
-}
-
-/** ISO → HH:mm。窗口起止只要钟点，日期已由上面的大字给过 */
-function ldClock(iso: string): string {
-  const d: Date | null = toDate(iso);
-  if (d === null) {
-    return '--:--';
-  }
-  return ldPad(d.getHours()) + ':' + ldPad(d.getMinutes());
-}
+//
+// 不塞进 utils/Format.ets：那是「全工程共用」的口径，加进去就得对所有页面负责。
+// 下面这几个只在发射详情页用得上，留在本文件里改名、改文案都不会波及列表页。
 
 /** 保留 1 位小数（1.0 → 1）：吨 / 亿美元这类单位后面跟 ".0" 很啰嗦 */
 function ldRound1(v: number): number {
@@ -188,7 +246,7 @@ function ldMassText(kg: number | null | undefined): string {
   return Math.round(v) + ' kg';
 }
 
-/** 造价文案（对位 format.js 的 costText）：亿 / 万 / 元 三档 */
+/** 造价文案（对位 format.js 的 costText）：亿 / 万 / 美元 三档 */
 function ldCostText(usd: number | null | undefined): string {
   const v: number = ldNum(usd);
   if (v <= 0) {
@@ -201,25 +259,6 @@ function ldCostText(usd: number | null | undefined): string {
     return String(ldRound1(v / 10000)) + ' 万美元';
   }
   return Math.round(v) + ' 美元';
-}
-
-/** 窗口时长文案（对位 format.js 的 spanText）：<60 分钟只报分钟，否则「H 小时 M 分钟」 */
-function ldSpanText(from: string, to: string): string {
-  const a: number = parseTime(from);
-  const b: number = parseTime(to);
-  if (a <= 0 || b <= 0 || b <= a) {
-    return '';
-  }
-  const mins: number = Math.round((b - a) / 60000);
-  if (mins < 60) {
-    return mins + ' 分钟';
-  }
-  const h: number = Math.floor(mins / 60);
-  const m: number = mins % 60;
-  if (m === 0) {
-    return h + ' 小时';
-  }
-  return h + ' 小时 ' + m + ' 分钟';
 }
 
 /** 报道标题：中文优先，没翻出来回退英文 */
@@ -240,6 +279,16 @@ function ldNewsMeta(n: NewsItem): string {
     return site;
   }
   return site + ' · ' + time;
+}
+
+/** 英文副标题只在「与中文名不同」时显示（否则两行一样的字） */
+function ldSubTitle(en: string, zh: string): string {
+  const a: string = strOf(en).trim();
+  const b: string = strOf(zh).trim();
+  if (a.length === 0 || a === b) {
+    return '';
+  }
+  return a;
 }
 
 // ============ 参数格 / 统计格（ArkTS 禁止无类型对象字面量，先建 class 再 new） ============
@@ -273,11 +322,37 @@ class LdCellRow {
   }
 }
 
+// ============ 首图相册 ============
+//
+// 一张图 = 缩略图（首屏用，480px）+ 原图（点开才加载，2000px）+ 标题/副标题。
+// 原图地址不是数据字段，靠 utils/Media 的 fullImageOf 从缩略图纯字符串推导。
+
+class LdPhoto {
+  /** 所属发射 UUID（用于 key，也用于将来跳转） */
+  id: string = '';
+  /** 480px 缩略图 */
+  thumb: string = '';
+  /** 2000px 原图；推导不出来时等于 thumb */
+  full: string = '';
+  /** 看图器大标题（任务名） */
+  title: string = '';
+  /** 看图器副行（型号 · 时间） */
+  meta: string = '';
+
+  constructor(id: string, thumb: string, full: string, title: string, meta: string) {
+    this.id = id;
+    this.thumb = thumb;
+    this.full = full;
+    this.title = title;
+    this.meta = meta;
+  }
+}
+
 // ============ 发射周期：类型与时长格式化 ============
 //
 // 为什么要本文件自建类型：工程 model/ 下没有 TimelineItem（grep 只命中 Dataset.ets 里的
-// 数据集键名 'timelines'）。这里的数据只为这一张卡服务，为它单开一个 model 文件不值当，
-// 所以定义在文件内。名字统一加 Ld 前缀 —— 与已有的 LdCell / LdCellRow 同族，
+// 数据集键名 'timelines'）。这里的数据只为这一张卡服务，为它单开一个 model 文件不值当。
+// 名字统一加 Ld 前缀 —— 与已有的 LdCell / LdCellRow 同族，
 // 也避免将来 model/Common.ets 里补上同名类型时被 ArkTS 当成声明合并。
 
 /**
@@ -296,44 +371,79 @@ interface LdTimelineEvent {
   z?: number | null;
 }
 
-/** timelines 的一条记录：一次发射对应一份 items 时间表 */
+/**
+ * 本次发射的航天器（飞船本体）。
+ *
+ * 来源是 timelines 记录里的 `craft` 字段 —— scripts/timeline.js 的 slimCraft()：
+ * 列表端点没有这个字段，只有单条详情才有，所以跟时间线同一趟抓回来。
+ * 长征这类不公开载荷的任务恒为 null（整卡不显示）。
+ */
+class LdCraft {
+  /** 飞船名（Crew Dragon C204） */
+  name: string = '';
+  /** 构型名（Crew Dragon 2） */
+  config: string = '';
+  /** 类型（载人舱 / 货运飞船 …），英文，需走 craftTypeName */
+  type: string = '';
+  /** 承制方英文名 */
+  agency: string = '';
+  /** 状态（Active / Retired / Destroyed …），英文，需走 craftStatusName */
+  status: string = '';
+  /** 目的地（LL2 的 destination），需走 destName */
+  dest: string = '';
+  desc: string = '';
+  image: string = '';
+  /** 载员（人），无人飞船是 0 */
+  crew: number = 0;
+  /** 运载能力（kg） */
+  payload: number = 0;
+  /** 高 / 直径（米） */
+  height: number = 0;
+  diameter: number = 0;
+  /** 构型首飞（日期串） */
+  maiden: string = '';
+  /** 是否可载人 */
+  human: boolean = false;
+  /** 本次是第几次飞行（0 = 没有这个数） */
+  flights: number = 0;
+}
+
+/** timelines 的一条记录：一次发射对应一份 items 时间表 + 一艘航天器 */
 interface LdTimelineItem {
   id?: string;
   name?: string;
   net?: string;
   items?: LdTimelineEvent[];
+  craft?: LdCraft | null;
 }
 
-/** 渲染用的一行：把 'a/d/t' 预先算成"给 Text 直接用的字符串" */
+/** 渲染用的一行：把 'a/t' 预先算成「给 Text 直接用的字符串」 */
 class LdTimelineRow {
-  /** 左侧时间标签，如 T-38 分 / T+2 时 48 分 / T-0 */
+  /** 右侧相对时间，如 T-38 分 / T+2 时 48 分 / T-0 */
   tag: string = '';
+  /** 事件中文名（表外保留英文） */
   name: string = '';
-  desc: string = '';
   /** 排序用的秒数（负=发射前），不参与展示 */
   sec: number = 0;
+  /** 已经发生过：名字与圆点压暗（对应小程序 .tl-row.past） */
+  past: boolean = false;
 
-  constructor(tag: string, name: string, desc: string, sec: number) {
+  constructor(tag: string, name: string, sec: number, past: boolean) {
     this.tag = tag;
     this.name = name;
-    this.desc = desc;
     this.sec = sec;
+    this.past = past;
   }
 }
-
-/** 时间线最多画 12 条：再多用户也不会读，卡会变成一屏滚动条 */
-const LD_TIMELINE_SHOW: number = 12;
 
 /**
  * 解析 ISO 8601 时长串，返回「秒」，发射前为负。
  *
  * 为什么手写扫描而不用正则：ArkTS 对 RegExpMatchArray 的下标访问很挑剔
- * （Media.ets 里为此专门加了注释），而时长串最多十几个字符，逐字符扫更稳，
- * 也不用担心正则字符串里的反斜杠要转义几层。
+ * （Media.ets 里为此专门加了注释），而时长串最多十几个字符，逐字符扫更稳。
  *
  * 支持的口径就是 LL2 实际会给出的那些：-PT38M / PT45S / PT2H48M28S / P0D / P1DT2H。
- * 解析不了（空串 / 格式不认识）一律返回 0，由调用方显示 T-0 —— 宁可显示"零时刻"，
- * 也不要出现 NaN 或 "T- 分"这种残句。
+ * 解析不了（空串 / 格式不认识）一律返回 0，由调用方显示 T-0。
  */
 function ldDurationSec(raw: string): number {
   const s: string = strOf(raw).trim();
@@ -367,7 +477,7 @@ function ldDurationSec(raw: string): number {
       continue;
     }
     // 数字 / 小数点用 charCodeAt 判，不用 '0' <= c && c <= '9'：
-    // ArkTS 对字符串的大小比较运算符支持有限，数值比较稳（工程内 Format.ets 同写法）
+    // ArkTS 对字符串的大小比较运算符支持有限，数值比较稳（Format.ets 同写法）
     const code: number = s.charCodeAt(i);
     const isDigit: boolean = code >= 48 && code <= 57;
     if (isDigit || code === 46) {
@@ -400,7 +510,6 @@ function ldDurationSec(raw: string): number {
  * 口径照抄小程序 utils/timeline.js 的 tlRelative：
  *   有天数 → "T-2 天 3 时"；有小时 → "T+2 时 48 分"；有分钟 → "T-38 分"；否则 "T+45 秒"。
  * 0 单独处理成 "T-0"（P0D 就是起飞时刻，小程序里同样写 T-0）。
- * 前缀的正负看总秒数，不看原始串：-PT0S 这种写法归到 T-0，不出现 "T-"。
  */
 function ldTimelineTag(sec: number): string {
   if (sec === 0) {
@@ -415,8 +524,7 @@ function ldTimelineTag(sec: number): string {
   const m: number = Math.floor(left / 60);
   const s: number = Math.round(left - m * 60);
 
-  // 数字一律 String() 再拼：ArkTS 里 string + number 的隐式转换不可靠，
-  // 显式转一次既稳又不用想类型推导
+  // 数字一律 String() 再拼：ArkTS 里 string + number 的隐式转换不可靠
   if (d > 0) {
     return h > 0 ? pre + String(d) + ' 天 ' + String(h) + ' 时' : pre + String(d) + ' 天';
   }
@@ -429,6 +537,51 @@ function ldTimelineTag(sec: number): string {
   return pre + String(s) + ' 秒';
 }
 
+/**
+ * 时间线里常见节点的中文短名。
+ *
+ * 为什么不用 CI 回填的 az（机翻）：实测把 "Prop Load" 翻成「支柱负载」、
+ * "GO for Prop Load" 翻成「GO 进行支柱负载」—— 这类节点名全是航天术语缩写，
+ * 交给通用翻译只会更糟。表外宁可显示英文，也别显示错的（与小程序 TL_ZH 同口径）。
+ */
+const LD_TL_ZH_KEYS: string[] = [
+  'go for prop load', 'prop load', 'lox load', 'stage 1 lox load', 'stage 2 lox load',
+  'rp-1 load', 'go for launch', 'weather briefing', 'terminal count', 'strongback retract',
+  'crew ingress', 'hatch close', 'engine chill', 'tank press', 'startup', 'ignition',
+  'liftoff', 'max-q', 'meco', 'stage separation', 'stage 2 separation', 'ses-1', 'ses-2',
+  'seco-1', 'seco-2', 'fairing deploy', 'fairing separation', 'entry burn',
+  'entry burn startup', 'entry burn shutdown', 'landing burn', 'stage 1 landing burn',
+  'landing', 'stage 1 landing', 'payload deploy', 'payload separation',
+  'payload deployment sequence start', 'payload deployment sequence end',
+  'dragon separation', 'docking', 'starlink deployment', 'starlink deploy', 'hold'
+];
+const LD_TL_ZH_VALUES: string[] = [
+  '推进剂加注许可', '推进剂加注', '液氧加注', '一级液氧加注', '二级液氧加注',
+  '煤油加注', '发射许可', '天气会商', '终端计数', '发射架撤收',
+  '航天员进舱', '舱门关闭', '发动机预冷', '贮箱增压', '发动机启动', '点火',
+  '起飞', '最大动压', '一级关机', '级间分离', '级间分离', '二级点火', '二级二次点火',
+  '二级关机', '二级二次关机', '整流罩分离', '整流罩分离', '再入点火',
+  '再入点火', '再入点火结束', '着陆点火', '一级着陆点火',
+  '一级着陆', '一级着陆', '载荷分离', '载荷分离',
+  '载荷部署开始', '载荷部署结束',
+  '飞船分离', '对接', '星链部署', '星链部署', '暂缓'
+];
+
+/** 事件名中文化：命中表返回中文，表外保留英文原文 */
+function ldTlLabel(raw: string): string {
+  const s: string = strOf(raw).trim();
+  if (s.length === 0) {
+    return '';
+  }
+  const low: string = s.toLowerCase();
+  for (let i = 0; i < LD_TL_ZH_KEYS.length; i++) {
+    if (LD_TL_ZH_KEYS[i] === low) {
+      return LD_TL_ZH_VALUES[i];
+    }
+  }
+  return s;
+}
+
 @Component
 export struct LaunchDetailView {
   /** 路由入参（id / net / title）。@Prop 深拷贝，页面内部不修改它 */
@@ -436,7 +589,7 @@ export struct LaunchDetailView {
 
   // ============ 页面状态 ============
 
-  /** 正在等数据（只挡内容区，返回栏始终在） */
+  /** 正在等数据（只挡内容区，顶栏始终在） */
   @State loading: boolean = true;
   /** 是否拿到了这条发射 */
   @State found: boolean = false;
@@ -449,12 +602,23 @@ export struct LaunchDetailView {
   /** 任务描述是否展开 */
   @State descExpanded: boolean = false;
 
-  // 三张图各自的破图标记：一张加载失败不该让另外两张也退化成色块
+  // 几张图各自的破图标记：一张加载失败不该让另外几张也退化成色块
   @State imgErr: boolean = false;
   @State rocketImgErr: boolean = false;
   @State mapErr: boolean = false;
+  @State craftImgErr: boolean = false;
   /** 任务信息图破图：竖版长图本来就大，加载失败还留个空框很难看 → 整卡不显示 */
   @State infoErr: boolean = false;
+
+  /** 首图相册（最多 5 张），第一张恒为本任务自己的主图 */
+  @State photos: LdPhoto[] = [];
+  /** 首图当前下标（只由 Swiper 的 onChange 回写） */
+  @State heroIdx: number = 0;
+
+  /** 全屏看图器是否打开（launch-photo 的对位实现） */
+  @State viewerOn: boolean = false;
+  /** 看图器当前下标 */
+  @State viewerIdx: number = 0;
 
   /**
    * 发射周期（只读缓存，不主动 load）。
@@ -462,10 +626,21 @@ export struct LaunchDetailView {
    * 放进 build 会在每次无关的状态变化（展开描述、破图标记）里重跑一遍。
    */
   @State tlRows: LdTimelineRow[] = [];
-  /** 时间线原始条数（>12 时卡片底部显示「共 N 条」） */
+  /** 时间线总条数（右上角「展开全部 N 步」用它） */
   @State tlTotal: number = 0;
+  /** 时间线是否展开（默认只给「接下来 4 步」） */
+  @State tlOpen: boolean = false;
 
-  /** 是否已收藏本页这条发射。顶栏星标靠它决定实心还是空心 */
+  /** 本次任务的航天器（timelines 的 craft 字段），null = 没有这张卡 */
+  @State craft: LdCraft | null = null;
+
+  /** 机构 logo（头部/机构行用；agencies 数据集里才有，异步补） */
+  @State agencyLogo: string = '';
+
+  /** 顶栏是否已变实色（滚动 > 200vp） */
+  @State navSolid: boolean = false;
+
+  /** 是否已收藏本页这条发射。顶栏星标与发射时刻卡里的「收藏」胶囊共用它 */
   @State faved: boolean = false;
 
   /** 已经解析过时间线的发射 id；同一条发射不重复解析 */
@@ -473,8 +648,9 @@ export struct LaunchDetailView {
 
   /** 还在跑的后台请求数（两份快照），归零才收 loading */
   private pending: number = 0;
-  /** 报道只拉一次（onUpdate / settle 都可能触发） */
+  /** 报道 / 机构 / 相册各自只拉一次 */
   private newsStarted: boolean = false;
+  private agencyStarted: boolean = false;
   /**
    * 上一次落地时信息图的地址。用途只有一个：刷新后地址没变就别清破图标记，
    * 否则同一张坏图会在每次后台刷新时重新请求、重新闪一下空框。
@@ -504,13 +680,10 @@ export struct LaunchDetailView {
   /**
    * 拼一条要落盘的收藏。
    *
-   * 为什么字段来源要分开取：
-   *   - `param` 只有 id / net / title 三个字段（路由入参刻意做小），
-   *     所以 id / net 直接用 param；
-   *   - title 优先用页面显示的标题（missionName 可能已经把中文补上），
-   *     它比 param.title 更贴近用户看到的东西；
-   *   - rocketName / image / siteName 只能从已加载的 detail 里派生，
-   *     取不到就让对应派生方法返回空串（它们本身都做了判空）。
+   * 字段来源：
+   *   - `param` 只有 id / net / title 三个字段（路由入参刻意做小），id / net 直接用 param；
+   *   - title 优先用页面显示的标题（missionName 可能已经把中文补上）；
+   *   - rocketName / image / siteName 只能从已加载的 detail 里派生。
    */
   private buildFav(): FavItem {
     const id: string = this.idText();
@@ -527,7 +700,7 @@ export struct LaunchDetailView {
   }
 
   /**
-   * 顶栏星标点击。
+   * 收藏点击（顶栏星标与发射时刻卡里的胶囊共用）。
    *
    * toast 文案分开写两个分支而不是拼字符串：中文里「已收藏」与「已取消收藏」
    * 不是简单的前缀关系，拼出来的「已」+「取消收藏」在语序上赌运气。
@@ -538,8 +711,13 @@ export struct LaunchDetailView {
     }
     const now: boolean = favToggle(this.buildFav());
     this.faved = now;
+    // 「已收藏，列表里会置顶」是与小程序一致的文案（favorites 列表按 savedAt 倒序）
+    this.toast(now ? '已收藏，列表里会置顶' : '已取消收藏');
+  }
+
+  private toast(msg: string): void {
     this.getUIContext().getPromptAction().showToast({
-      message: now ? '已收藏' : '已取消收藏',
+      message: msg,
       duration: 1500
     });
   }
@@ -547,7 +725,7 @@ export struct LaunchDetailView {
   // ============ 加载 ============
 
   /**
-   * 加载主干：缓存同步出首屏 → 后台刷新快照 → 首屏之后再拉报道。
+   * 加载主干：缓存同步出首屏 → 后台刷新快照 → 首屏之后再拉报道/机构。
    *
    * 为什么两份快照都查：同一条发射跨过发射时刻后会从 upcoming 挪到 previous，
    * 用户刚在列表里看过就点进来时可能已经换边了；只查一边会出现「列表里有、点进去没有」。
@@ -568,7 +746,7 @@ export struct LaunchDetailView {
 
     if (this.found) {
       this.loading = false;
-      this.startNews();
+      this.afterItem();
     }
 
     // 2) 后台刷新两份主快照。不传 force：有缓存时 load 立刻 resolve 缓存、
@@ -582,8 +760,7 @@ export struct LaunchDetailView {
    * 后台刷新一份快照。
    *
    * 泛型参数故意用 DataSet 而不是 UpcomingPayload/PreviousPayload：
-   * 这两份数据的信封结构完全一致，本页只关心 list 里的 id 能不能对上，
-   * 用 DataSet 就不用为两个同构载荷各抄一遍回调。
+   * 这两份数据的信封结构完全一致，本页只关心 list 里的 id 能不能对上。
    */
   private loadSnapshot(name: DatasetName): void {
     const opts: LoadOptions<DataSet> = {
@@ -634,21 +811,29 @@ export struct LaunchDetailView {
     }
 
     this.loadTimeline();
+    this.afterItem();
+  }
+
+  /** 首屏落地之后才做的事：报道 / 机构 / 首图相册（都不阻塞正文） */
+  private afterItem(): void {
+    this.startNews();
+    this.loadAgency();
+    this.rebuildPhotos();
   }
 
   /**
-   * 发射周期：只从缓存里按 id 取，**不 load**。
+   * 发射周期：只从缓存里按 id 取，**不 load**（取舍见文件头第 2 条）。
    *
-   * 取舍写在文件头第 2 条。这里补一句实现细节：findById 命中不了有两种情况
-   * （缓存里根本没 timelines、或有 timelines 但没有这条发射），两者都表现为
-   * 空数组 → 整卡不显示，用户看到的就是「这页没有发射周期」，
-   * 不会出现转圈或「暂无数据」这种半吊子状态。
+   * findById 命中不了有两种情况（缓存里根本没 timelines、或有但没有这条发射），
+   * 两者都表现为整卡不显示，不会出现转圈或「暂无数据」这种半吊子状态。
+   * 同一份记录里还带着 craft（航天器），所以航天器卡也跟着一起落地。
    */
   private loadTimeline(): void {
     const id: string = this.idText();
     if (id.length === 0) {
       this.tlRows = [];
       this.tlTotal = 0;
+      this.craft = null;
       return;
     }
     if (this.tlIdCache === id) {
@@ -660,26 +845,36 @@ export struct LaunchDetailView {
     if (hit === null) {
       this.tlRows = [];
       this.tlTotal = 0;
+      this.craft = null;
       return;
     }
+
+    // 航天器与时间线同源：有时只有 craft 没有 items（或不公开载荷时正好相反）
+    const c: LdCraft | null | undefined = hit.craft;
+    this.craft = c === undefined || c === null ? null : c;
 
     const raw: LdTimelineEvent[] | undefined = hit.items;
     if (raw === undefined || raw.length === 0) {
       this.tlRows = [];
       this.tlTotal = 0;
+      this.tlIdCache = id;
       return;
     }
 
+    const t0: number = parseTime(strOf(this.item.net));
+    const now: number = Date.now();
     const all: LdTimelineRow[] = [];
     for (let i = 0; i < raw.length; i++) {
       const e: LdTimelineEvent = raw[i];
-      const name: string = strOf(e.a).trim();
+      const name: string = ldTlLabel(strOf(e.a));
       if (name.length === 0) {
         // 没事件名的条目画出来就是一个孤零零的时间，没有信息量
         continue;
       }
       const sec: number = ldDurationSec(strOf(e.t));
-      all.push(new LdTimelineRow(ldTimelineTag(sec), name, strOf(e.d).trim(), sec));
+      // past 判定：发射时刻 + 相对秒数 < 现在。net 解析不出来时一律当作「还没发生」
+      const past: boolean = t0 > 0 && t0 + sec * 1000 < now;
+      all.push(new LdTimelineRow(ldTimelineTag(sec), name, sec, past));
     }
 
     // 升序：T-2 天 → T-0 → T+10 分。数据源本身多半已排好，但 CI 合并多条来源后
@@ -687,7 +882,7 @@ export struct LaunchDetailView {
     all.sort((a: LdTimelineRow, b: LdTimelineRow) => a.sec - b.sec);
 
     this.tlTotal = all.length;
-    this.tlRows = all.length > LD_TIMELINE_SHOW ? all.slice(0, LD_TIMELINE_SHOW) : all;
+    this.tlRows = all;
     this.tlIdCache = id;
   }
 
@@ -700,7 +895,7 @@ export struct LaunchDetailView {
     this.pending = 0;
     this.loading = false;
     if (this.found) {
-      this.startNews();
+      this.afterItem();
     }
   }
 
@@ -720,11 +915,8 @@ export struct LaunchDetailView {
       return;
     }
 
-    // 不传 opts：报道只要「有就用、没有就整卡不显示」，不需要缓存回调，
-    // 也不用 force（用户翻回来看同一页时不该重新下 news.json）。
     repo.load<NewsPayload>('news')
       .then((data: NewsPayload) => {
-        // list 在 NewsPayload 里是必填字段，直接遍历即可
         const raw: NewsItem[] = data.list;
         const kept: NewsItem[] = [];
         for (let i = 0; i < raw.length; i++) {
@@ -751,10 +943,267 @@ export struct LaunchDetailView {
       });
   }
 
-  private retry(): void {
-    this.newsStarted = false;
-    this.loading = true;
-    this.loadDetail();
+  /**
+   * 发射机构：launch_service_provider 只有 id + name（没有 logo），
+   * logo 只在 agencies 数据集里，所以要异步补一次（小程序同样走 fetchAgency）。
+   * 拉失败就不画 logo，机构名与国旗（emoji）照常显示。
+   */
+  private loadAgency(): void {
+    if (this.agencyStarted) {
+      return;
+    }
+    const p: LaunchProvider | undefined = this.item.launch_service_provider;
+    if (p === undefined || p === null) {
+      return;
+    }
+    this.agencyStarted = true;
+    const pid: string = p.id === undefined || p.id === null ? '' : String(p.id);
+    const pname: string = strOf(p.name);
+
+    repo.load<AgAgenciesPayload>('agencies')
+      .then((data: AgAgenciesPayload) => {
+        const list: AgAgency[] = data.list;
+        for (let i = 0; i < list.length; i++) {
+          const a: AgAgency = list[i];
+          const hitId: boolean = pid.length > 0 && String(a.id) === pid;
+          const hitName: boolean = pid.length === 0 && strOf(a.name) === pname;
+          if (hitId || hitName) {
+            this.agencyLogo = strOf(a.logo_url);
+            return;
+          }
+        }
+      })
+      .catch((e: BusinessError) => {
+        hilog.warn(DOMAIN, TAG, 'agencies 加载失败: %{public}s', e.message);
+      });
+  }
+
+  // ============ 首图相册 ============
+
+  /** 主图缩略图（首屏用；点开时才换 2000px 原图） */
+  private imageSrc(): string {
+    return strOf(this.item.image);
+  }
+
+  private imageCredit(): string {
+    return strOf(this.item.imageCredit);
+  }
+
+  /** 缩略图 → 原图；推导不出来就退回缩略图本身 */
+  private fullOf(thumbUrl: string): string {
+    const full: string = fullImageOf(thumbUrl);
+    return full.length > 0 ? full : thumbUrl;
+  }
+
+  /** 火箭构型的数字 id（同系列判定用；可能为 null/缺） */
+  private seriesId(): string {
+    const r: LaunchRocket | undefined = this.item.rocket;
+    if (r === undefined || r === null) {
+      return '';
+    }
+    const cid: number | null | undefined = r.configuration.id;
+    if (cid === undefined || cid === null) {
+      return '';
+    }
+    return String(cid);
+  }
+
+  /** 火箭构型的英文名（同系列判定用） */
+  private seriesName(): string {
+    const r: LaunchRocket | undefined = this.item.rocket;
+    if (r === undefined || r === null) {
+      return '';
+    }
+    return strOf(r.configuration.name);
+  }
+
+  /** 另一条发射是否同系列：构型 id 相同，或 id 缺失时英文名相同 */
+  private sameSeries(other: LaunchSummary, sid: string, sname: string): boolean {
+    const r: LaunchRocket | undefined = other.rocket;
+    if (r === undefined || r === null) {
+      return false;
+    }
+    if (sid.length > 0) {
+      const cid: number | null | undefined = r.configuration.id;
+      if (cid !== undefined && cid !== null && String(cid) === sid) {
+        return true;
+      }
+    }
+    return sname.length > 0 && strOf(r.configuration.name) === sname;
+  }
+
+  /** 图片标题：LL2 的发射名是「型号 | 任务」，看图器只要任务那半段 */
+  private photoTitleOf(raw: string): string {
+    const s: string = strOf(raw);
+    const parts: string[] = s.split('|');
+    if (parts.length > 1) {
+      return strOf(parts[1]).trim();
+    }
+    return s;
+  }
+
+  /**
+   * 重建首图相册：主图 + 同系列首图（最多 5 张）。
+   *
+   * 「同系列」取自本机已缓存的发射快照（取舍见文件头第 3 条）——
+   * 这一步是纯同步的 repo.peek，不发任何网络，所以可以在 applyItem 里直接调；
+   * 后台快照刷新后再调一次，就能把新到的同系列图补进轮播。
+   */
+  private rebuildPhotos(): void {
+    const out: LdPhoto[] = [];
+    const raw: string = this.imageSrc();
+    if (raw.length > 0) {
+      const t: string = thumbOf(raw);
+      out.push(new LdPhoto(this.idText(), t, this.fullOf(t), this.photoTitleOf(this.titleText()),
+        this.rocketName()));
+    }
+
+    const sid: string = this.seriesId();
+    const sname: string = this.seriesName();
+    if (sid.length > 0 || sname.length > 0) {
+      const names: DatasetName[] = ['upcoming', 'previous', 'upcomingMore'];
+      for (let k = 0; k < names.length; k++) {
+        if (out.length >= HERO_MAX) {
+          break;
+        }
+        const d: DataSet | null = repo.peek<DataSet>(names[k]);
+        if (d === null) {
+          continue;
+        }
+        const list: Object[] | undefined = d.list;
+        if (list === undefined) {
+          continue;
+        }
+        for (let i = 0; i < list.length; i++) {
+          if (out.length >= HERO_MAX) {
+            break;
+          }
+          const rec: LaunchSummary = list[i] as Object as LaunchSummary;
+          if (rec === undefined || rec === null) {
+            continue;
+          }
+          if (strOf(rec.id) === this.idText()) {
+            continue;
+          }
+          if (!this.sameSeries(rec, sid, sname)) {
+            continue;
+          }
+          const img: string = thumbOf(strOf(rec.image));
+          if (img.length === 0) {
+            continue;
+          }
+          // 去重：同一张镜像图可能被多条记录引用（同一次任务的多次推迟）
+          let dup: boolean = false;
+          for (let j = 0; j < out.length; j++) {
+            if (out[j].thumb === img) {
+              dup = true;
+              break;
+            }
+          }
+          if (dup) {
+            continue;
+          }
+          out.push(new LdPhoto(strOf(rec.id), img, this.fullOf(img),
+            this.photoTitleOf(strOf(rec.name)), this.rocketNameOf(rec)));
+        }
+      }
+    }
+
+    this.photos = out;
+    // 相册变短时把下标收回来，否则 Swiper 的 index 越界会显示空白
+    if (this.heroIdx >= out.length) {
+      this.heroIdx = 0;
+    }
+    if (this.viewerIdx >= out.length) {
+      this.viewerIdx = 0;
+    }
+  }
+
+  /** 从任意一条发射取型号名（同系列相册的副标题用） */
+  private rocketNameOf(rec: LaunchSummary): string {
+    const label: string = strOf(rocketLabelOf(rec));
+    if (label.length > 0) {
+      return label;
+    }
+    return '';
+  }
+
+  /** 看图器大标题 */
+  private viewerTitle(): string {
+    const cur: LdPhoto | null = this.currentPhoto();
+    if (cur === null) {
+      return this.titleText();
+    }
+    return cur.title.length > 0 ? cur.title : this.titleText();
+  }
+
+  /** 看图器副行：型号 · 时间 · @credit（与小程序 stage-meta 同口径） */
+  private viewerMeta(): string {
+    const parts: string[] = [];
+    const cur: LdPhoto | null = this.currentPhoto();
+    if (cur !== null && cur.meta.length > 0) {
+      parts.push(cur.meta);
+    }
+    const when: string = longDate(this.item.net);
+    if (when.length > 0) {
+      parts.push(when);
+    }
+    const credit: string = this.imageCredit();
+    if (credit.length > 0) {
+      parts.push('@' + credit);
+    }
+    let out: string = '';
+    for (let i = 0; i < parts.length; i++) {
+      if (i > 0) {
+        out = out + ' · ';
+      }
+      out = out + parts[i];
+    }
+    return out;
+  }
+
+  private currentPhoto(): LdPhoto | null {
+    if (this.viewerIdx < 0 || this.viewerIdx >= this.photos.length) {
+      return null;
+    }
+    return this.photos[this.viewerIdx];
+  }
+
+  /** 首图点击：只有一张时走图片详情页；多张时打开本页看图器（取舍见文件头第 4 条） */
+  private openHero(): void {
+    if (this.photos.length > 1) {
+      this.viewerIdx = this.heroIdx;
+      this.viewerOn = true;
+      return;
+    }
+    const url: string = this.photos.length > 0 ? this.photos[0].full : this.fullOf(thumbOf(this.imageSrc()));
+    if (url.length === 0) {
+      return;
+    }
+    Nav.pushPhoto(new PhotoNavParam(url, this.titleText()));
+  }
+
+  /** 图片库入口：鸿蒙侧没有 media 页，用已有的视频库顶上（取舍见文件头第 5 条） */
+  private goMedia(): void {
+    Nav.pushVideos('');
+  }
+
+  // ============ 顶栏滚动状态 ============
+
+  /**
+   * 滚动时同步顶栏实色标记。
+   *
+   * 用 scroller.currentOffset() 取绝对偏移，而不是回调里的 scrollOffset 增量 ——
+   * 增量在不同版本上有「本次位移」和「累计位移」两种解读，绝对偏移没有歧义。
+   */
+  private syncNavSolid(): void {
+    // 不写 `: OffsetResult` 显式标注：它是 ArkUI 的全局内置接口，工程内没有第二处
+    // currentOffset 用例可对拍，交给推断更不容易因为 SDK 改了返回类型就编译失败
+    const off = this.scroller.currentOffset();
+    const solid: boolean = off.yOffset > NAV_SOLID_Y;
+    if (solid !== this.navSolid) {
+      this.navSolid = solid;
+    }
   }
 
   // ============ 派生数据：标题 / 状态 ============
@@ -765,7 +1214,7 @@ export struct LaunchDetailView {
 
   private missionName(): string {
     const m: LaunchMission | undefined = this.item.mission;
-    if (m === undefined) {
+    if (m === undefined || m === null) {
       return '';
     }
     const zh: string = strOf(m.nameZh);
@@ -775,7 +1224,7 @@ export struct LaunchDetailView {
     return strOf(m.name);
   }
 
-  /** 页头 / Hero 标题：任务名 → 入参标题 → 发射名，逐级回退 */
+  /** 页头 / 首图 / 顶栏标题：任务名 → 入参标题 → 发射名，逐级回退 */
   private titleText(): string {
     const mission: string = this.missionName();
     if (mission.length > 0) {
@@ -790,7 +1239,7 @@ export struct LaunchDetailView {
 
   private missionDesc(): string {
     const m: LaunchMission | undefined = this.item.mission;
-    if (m === undefined) {
+    if (m === undefined || m === null) {
       return '';
     }
     const zh: string = strOf(m.descriptionZh);
@@ -800,22 +1249,23 @@ export struct LaunchDetailView {
     return strOf(m.description);
   }
 
+  /** 任务类型（中文化：Communications → 通信） */
   private missionType(): string {
     const m: LaunchMission | undefined = this.item.mission;
-    if (m === undefined) {
+    if (m === undefined || m === null) {
       return '';
     }
-    return strOf(m.type);
+    return missionTypeName(strOf(m.type));
   }
 
   private orbitText(): string {
     return orbitLabelOf(this.item);
   }
 
-  /** 任务卡是否出现：描述 / 轨道 / 类型任一有值（见文件头取舍 4） */
+  /** 任务卡是否出现：任务名 / 类型 / 轨道 / 描述任一有值 */
   private hasMission(): boolean {
-    return this.missionDesc().length > 0 || this.orbitText().length > 0 ||
-      this.missionType().length > 0;
+    return this.missionName().length > 0 || this.missionType().length > 0 ||
+      this.orbitText().length > 0 || this.missionDesc().length > 0;
   }
 
   private canExpandDesc(): boolean {
@@ -830,12 +1280,39 @@ export struct LaunchDetailView {
     return statusOf(this.item).text;
   }
 
-  private statusColor(): string {
-    return statusToneColor(statusOf(this.item).tone);
+  /**
+   * 状态徽章色（对位 launch-content.vue 的 .badge.*）：
+   *   成功 #34c759 / 失败 #ff3b30 / 飞行中 #f5c33b / 其余（待发 · 未知）一律青色。
+   * 不复用 statusToneColor：它对 pending 给的是灰 #8A97A8，
+   * 而小程序详情页的待发徽章是青色，两处口径不同。
+   */
+  private badgeColor(): string {
+    const tone: string = statusOf(this.item).tone;
+    if (tone === 'success') {
+      return '#34C759';
+    }
+    if (tone === 'failure') {
+      return '#FF3B30';
+    }
+    if (tone === 'flying') {
+      return '#F5C33B';
+    }
+    return '#38BDF8';
   }
 
-  private statusBg(): string {
-    return statusToneBg(statusOf(this.item).tone);
+  /** 徽章底色：同色系 0.15 alpha（rgba → #26RRGGBB） */
+  private badgeBg(): string {
+    const tone: string = statusOf(this.item).tone;
+    if (tone === 'success') {
+      return '#2634C759';
+    }
+    if (tone === 'failure') {
+      return '#26FF3B30';
+    }
+    if (tone === 'flying') {
+      return '#26F5C33B';
+    }
+    return '#2638BDF8';
   }
 
   // ============ 派生数据：时间 / 窗口 ============
@@ -854,8 +1331,6 @@ export struct LaunchDetailView {
     if (t > Date.now()) {
       return true;
     }
-    // 标注带上 null：LaunchStatus 本身不含 null，但 JSON 里 status 可能是显式 null，
-    // 只标 undefined 却在下一行判 null，标准 TS 会报「两个类型不可能相等」。
     const st: LaunchStatus | null | undefined = this.item.status;
     const ab: string = st === undefined || st === null ? '' : strOf(st.abbrev);
     const final: boolean = ab === 'Success' || ab === 'Failure' || ab === 'Deployed' ||
@@ -877,7 +1352,7 @@ export struct LaunchDetailView {
   }
 
   private windowSpan(): string {
-    return ldSpanText(this.winStart(), this.winEnd());
+    return spanText(this.winStart(), this.winEnd());
   }
 
   // ============ 派生数据：火箭 ============
@@ -895,9 +1370,7 @@ export struct LaunchDetailView {
    * 构型后缀推导），再回退 rocketBrief.name，最后 rocket.configuration.name。
    *
    * 为什么不是「rocketBrief.name 优先」：rocketBrief 的 name 是 LL2 英文原名，
-   * 列表页（LaunchCard / LaunchView）显示的是 rocketLabelOf 的「猎鹰 9 号 Block 5」；
-   * 两处口径不一致时，用户点进来会以为换了型号。中文名缺失时 rocketLabelOf 自己
-   * 会回退英文原文，所以它放第一位不会造成"没名字"。
+   * 列表页显示的是「猎鹰 9 号 Block 5」；两处口径不一致时，用户点进来会以为换了型号。
    */
   private rocketName(): string {
     const label: string = strOf(rocketLabelOf(this.item));
@@ -912,52 +1385,36 @@ export struct LaunchDetailView {
       }
     }
     const r: LaunchRocket | undefined = this.item.rocket;
-    if (r === undefined) {
+    if (r === undefined || r === null) {
       return '';
     }
     return strOf(r.configuration.name);
   }
 
-  /**
-   * 参数行：高度 · 直径 · LEO 运力 · 级数，缺哪段跳过哪段。
-   *
-   * 字段名以 model/Common.ets 的 RocketBrief 为准：length（不是 height）、
-   * diameter、leo_capacity、max_stage。写成 height 会直接编译不过。
-   */
-  private rocketParamText(): string {
-    const rb: RocketBrief | null = this.rocketBrief();
-    if (rb === null) {
+  /** 英文副标题：LL2 的 full_name（含构型），与中文名相同则不显示 */
+  private rocketSub(): string {
+    const r: LaunchRocket | undefined = this.item.rocket;
+    if (r === undefined || r === null) {
       return '';
     }
-    const parts: string[] = [];
-    if (ldHas(rb.length)) {
-      parts.push('高 ' + String(ldRound1(ldNum(rb.length))) + ' 米');
-    }
-    if (ldHas(rb.diameter)) {
-      parts.push('直径 ' + String(ldRound1(ldNum(rb.diameter))) + ' 米');
-    }
-    if (ldHas(rb.leo_capacity)) {
-      parts.push('LEO ' + ldMassText(rb.leo_capacity));
-    }
-    if (ldHas(rb.max_stage)) {
-      parts.push(String(Math.round(ldNum(rb.max_stage))) + ' 级');
-    }
-    let out: string = '';
-    for (let i = 0; i < parts.length; i++) {
-      if (i > 0) {
-        out = out + ' · ';
-      }
-      out = out + parts[i];
-    }
-    return out;
+    const c: RocketConfig = r.configuration;
+    const en: string = strOf(c.full_name).length > 0 ? strOf(c.full_name) : strOf(c.name);
+    return ldSubTitle(en, this.rocketName());
   }
 
-  /**
-   * 火箭缩略图。只有 rocketBrief.image 一条来源 ——
-   * 任务书里写的「或 rocket.image」在本工程不存在：LaunchRocket 只有
-   * configuration（id / name / full_name / variant / families），没有 image 字段。
-   * 所以拿不到就返回空串，卡片侧据此整张图不画（不留灰块）。
-   */
+  /** 现役 / 已退役。没有 rocketBrief 时不画（不清楚就别猜） */
+  private rocketActiveKnown(): boolean {
+    return this.rocketBrief() !== null;
+  }
+
+  private rocketActive(): boolean {
+    const rb: RocketBrief | null = this.rocketBrief();
+    if (rb === null) {
+      return false;
+    }
+    return rb.active === true;
+  }
+
   private rocketImage(): string {
     const rb: RocketBrief | null = this.rocketBrief();
     if (rb === null) {
@@ -974,10 +1431,7 @@ export struct LaunchDetailView {
     return strOf(rb.desc);
   }
 
-  /**
-   * 小标签。只留「可复用」——级数已经在 rocketParamText() 的参数行里出现过，
-   * 同一张卡上「4 级」写两遍（参数行 + chip）纯属重复。
-   */
+  /** 小标签：可复用 / N 级（小程序 rocketFlags 两项都画，参数格里也有级数，属有意重复） */
   private rocketFlags(): string[] {
     const out: string[] = [];
     const rb: RocketBrief | null = this.rocketBrief();
@@ -987,25 +1441,55 @@ export struct LaunchDetailView {
     if (rb.reusable === true) {
       out.push('可复用');
     }
+    if (ldHas(rb.max_stage)) {
+      out.push(String(Math.round(ldNum(rb.max_stage))) + ' 级');
+    }
     return out;
   }
 
-  // 原本这里还有一个 rocketSpecs()（六格：推力 / 长度 / 直径 / 级数 / LEO / GTO）。
-  // 火箭卡改成「一行参数 + 两行简介」之后，长度 / 直径 / 级数 / LEO 四项与
-  // rocketParamText() 完全重复，六格再画一遍等于同一组数字出现两次；
-  // 剩下的推力与 GTO 点进火箭详情页就能看到。故整段删除，不保留死代码。
-  // cellGrid() 仍被统计概览卡（countCells）使用，不能动。
+  /**
+   * 火箭六格参数（对位 launch-content.vue 的 rocketSpecs）：
+   *   起飞推力 / 长度 / 直径 / 级数 / LEO 运力 / GTO 运力。
+   * 值 0 或空一律跳过 —— 这份数据里 0 就是「没填」，画出来是一屏 0。
+   */
+  private rocketSpecCells(): LdCell[] {
+    const out: LdCell[] = [];
+    const rb: RocketBrief | null = this.rocketBrief();
+    if (rb === null) {
+      return out;
+    }
+    if (ldHas(rb.to_thrust)) {
+      out.push(new LdCell('起飞推力', String(Math.round(ldNum(rb.to_thrust))) + ' 千牛'));
+    }
+    if (ldHas(rb.length)) {
+      out.push(new LdCell('长度', String(ldRound1(ldNum(rb.length))) + ' 米'));
+    }
+    if (ldHas(rb.diameter)) {
+      out.push(new LdCell('直径', String(ldRound1(ldNum(rb.diameter))) + ' 米'));
+    }
+    if (ldHas(rb.max_stage)) {
+      out.push(new LdCell('级数', String(Math.round(ldNum(rb.max_stage))) + ' 级'));
+    }
+    const leo: string = ldMassText(rb.leo_capacity);
+    if (leo.length > 0) {
+      out.push(new LdCell('LEO 运力', leo));
+    }
+    const gto: string = ldMassText(rb.gto_capacity);
+    if (gto.length > 0) {
+      out.push(new LdCell('GTO 运力', gto));
+    }
+    return out;
+  }
 
-  /** 一行小字：起飞质量 · 单次造价 · 首飞 */
-  private rocketMeta(): string {
+  /** 一行小字：起飞质量 · 单次造价 · 首飞（参数格放不下的三项） */
+  private rocketMetaText(): string {
     const rb: RocketBrief | null = this.rocketBrief();
     if (rb === null) {
       return '';
     }
     const parts: string[] = [];
-    // launch_mass 本身单位就是吨（slim.js:355 注释「起飞质量单位是吨」），
+    // launch_mass 本身单位就是吨（slim.js 注释「起飞质量单位是吨」），
     // 不能走 ldMassText —— 那是给 kg 用的，549 吨会被判成 "549 kg" 少写三位。
-    // 与小程序 launch-content.vue:449 一致：只保留一位小数、整数不显示 .0。
     const massNum: number = ldNum(rb.launch_mass);
     if (massNum > 0) {
       const mt: number = Math.round(massNum * 10) / 10;
@@ -1035,6 +1519,169 @@ export struct LaunchDetailView {
       return;
     }
     Nav.pushRocket(new RocketNavParam(name));
+  }
+
+  // ============ 派生数据：发射机构 ============
+
+  private agencyName(): string {
+    const p: LaunchProvider | undefined = this.item.launch_service_provider;
+    if (p === undefined || p === null) {
+      return '';
+    }
+    return agencyLabel(strOf(p.name));
+  }
+
+  /** 国旗 emoji（Format.flagSrc 返回 emoji，不是图片地址） */
+  private agencyFlag(): string {
+    const p: LaunchProvider | undefined = this.item.launch_service_provider;
+    if (p === undefined || p === null) {
+      return '';
+    }
+    return flagSrc(strOf(p.name));
+  }
+
+  private hasAgency(): boolean {
+    return this.agencyName().length > 0;
+  }
+
+  private goAgency(): void {
+    const p: LaunchProvider | undefined = this.item.launch_service_provider;
+    if (p === undefined || p === null) {
+      return;
+    }
+    const id: string = p.id === undefined || p.id === null ? '' : String(p.id);
+    Nav.pushAgency(new AgencyNavParam(id, strOf(p.name)));
+  }
+
+  // ============ 派生数据：航天器 ============
+
+  private craftTitle(): string {
+    const c: LdCraft | null = this.craft;
+    if (c === null) {
+      return '';
+    }
+    const n: string = strOf(c.name);
+    return n.length > 0 ? n : strOf(c.config);
+  }
+
+  /** 副行：构型 · 类型 · 承制方（名称里已经含构型时不重复） */
+  private craftSub(): string {
+    const c: LdCraft | null = this.craft;
+    if (c === null) {
+      return '';
+    }
+    const parts: string[] = [];
+    const cfg: string = strOf(c.config);
+    if (cfg.length > 0 && cfg !== this.craftTitle()) {
+      parts.push(cfg);
+    }
+    const type: string = craftTypeName(strOf(c.type));
+    if (type.length > 0) {
+      parts.push(type);
+    }
+    const ag: string = agencyLabel(strOf(c.agency));
+    if (ag.length > 0) {
+      parts.push(ag);
+    }
+    let out: string = '';
+    for (let i = 0; i < parts.length; i++) {
+      if (i > 0) {
+        out = out + ' · ';
+      }
+      out = out + parts[i];
+    }
+    return out;
+  }
+
+  private craftStatusText(): string {
+    const c: LdCraft | null = this.craft;
+    if (c === null) {
+      return '';
+    }
+    return craftStatusName(strOf(c.status));
+  }
+
+  /** 只有 Active 算「在役」；Destroyed / Lost / Retired 都用灰标签，别把已损毁染成绿色 */
+  private craftLive(): boolean {
+    const c: LdCraft | null = this.craft;
+    if (c === null) {
+      return false;
+    }
+    return strOf(c.status).toLowerCase() === 'active';
+  }
+
+  private craftDest(): string {
+    const c: LdCraft | null = this.craft;
+    if (c === null) {
+      return '';
+    }
+    return destName(strOf(c.dest));
+  }
+
+  private craftDesc(): string {
+    const c: LdCraft | null = this.craft;
+    if (c === null) {
+      return '';
+    }
+    return strOf(c.desc);
+  }
+
+  private craftImage(): string {
+    const c: LdCraft | null = this.craft;
+    if (c === null) {
+      return '';
+    }
+    return strOf(c.image);
+  }
+
+  /** 乘员 / 载员：crew_capacity 是「能坐几个人」，无人飞船是 0，不显示 0 */
+  private craftSpecCells(): LdCell[] {
+    const out: LdCell[] = [];
+    const c: LdCraft | null = this.craft;
+    if (c === null) {
+      return out;
+    }
+    if (ldHas(c.height)) {
+      out.push(new LdCell('高度', String(ldRound1(ldNum(c.height))) + ' 米'));
+    }
+    if (ldHas(c.diameter)) {
+      out.push(new LdCell('直径', String(ldRound1(ldNum(c.diameter))) + ' 米'));
+    }
+    if (ldHas(c.crew)) {
+      out.push(new LdCell('载员', String(Math.round(ldNum(c.crew))) + ' 人'));
+    }
+    const payload: string = ldMassText(c.payload);
+    if (payload.length > 0) {
+      out.push(new LdCell('运载能力', payload));
+    }
+    // 值和标签上下排：写成「本次是第 / 1 次飞行」会把主谓拆到两行
+    if (ldHas(c.flights)) {
+      out.push(new LdCell('本次飞行', '第 ' + String(Math.round(ldNum(c.flights))) + ' 次'));
+    }
+    return out;
+  }
+
+  private craftMetaText(): string {
+    const c: LdCraft | null = this.craft;
+    if (c === null) {
+      return '';
+    }
+    const parts: string[] = [];
+    if (c.human === true) {
+      parts.push('可载人');
+    }
+    const maiden: string = strOf(c.maiden);
+    if (maiden.length > 0) {
+      parts.push('构型首飞 ' + maiden);
+    }
+    let out: string = '';
+    for (let i = 0; i < parts.length; i++) {
+      if (i > 0) {
+        out = out + ' · ';
+      }
+      out = out + parts[i];
+    }
+    return out;
   }
 
   // ============ 派生数据：发射条件 / 失败原因 / 场地 / 统计 ============
@@ -1069,15 +1716,42 @@ export struct LaunchDetailView {
 
   private padName(): string {
     const pad: LaunchPad | undefined = this.item.pad;
-    if (pad === undefined) {
+    if (pad === undefined || pad === null) {
       return '';
     }
     return strOf(pad.name);
   }
 
+  /**
+   * 场地写法（对位小程序 padPlace）：设施名第一段 + 中文国家。
+   * 直接铺 "Jiuquan Satellite Launch Center, People's Republic of China" 会占两行且全英文。
+   */
   private padPlace(): string {
     const pad: LaunchPad | undefined = this.item.pad;
-    if (pad === undefined) {
+    if (pad === undefined || pad === null) {
+      return '';
+    }
+    const loc: PadLocation | undefined = pad.location;
+    if (loc === undefined || loc === null) {
+      return '';
+    }
+    const name: string = strOf(loc.name);
+    if (name.length === 0) {
+      return '';
+    }
+    const parts: string[] = name.split(',');
+    const first: string = strOf(parts[0]).trim();
+    const country: string = countryOf(this.item);
+    if (country.length === 0 || first === country) {
+      return first.length > 0 ? first : country;
+    }
+    return first.length > 0 ? first + ' · ' + country : country;
+  }
+
+  /** 发射场原文（PadNavParam 的 place 用，PadView 靠它给 "Unknown Pad" 消歧） */
+  private padLocationName(): string {
+    const pad: LaunchPad | undefined = this.item.pad;
+    if (pad === undefined || pad === null) {
       return '';
     }
     const loc: PadLocation | undefined = pad.location;
@@ -1090,7 +1764,7 @@ export struct LaunchDetailView {
   /** 经纬度：两个都有才显示（只有一个的话坐标没有意义） */
   private padCoord(): string {
     const pad: LaunchPad | undefined = this.item.pad;
-    if (pad === undefined) {
+    if (pad === undefined || pad === null) {
       return '';
     }
     const lat: number | null | undefined = pad.latitude;
@@ -1103,10 +1777,36 @@ export struct LaunchDetailView {
 
   private padMap(): string {
     const pad: LaunchPad | undefined = this.item.pad;
-    if (pad === undefined) {
+    if (pad === undefined || pad === null) {
       return '';
     }
     return strOf(pad.map_image);
+  }
+
+  /** 工位累计发射数：pad.total_launch_count 优先，回退 location.total_launch_count */
+  private padLaunchCount(): number {
+    const pad: LaunchPad | undefined = this.item.pad;
+    if (pad === undefined || pad === null) {
+      return 0;
+    }
+    if (ldHas(pad.total_launch_count)) {
+      return ldNum(pad.total_launch_count);
+    }
+    const loc: PadLocation | undefined = pad.location;
+    if (loc === undefined || loc === null) {
+      return 0;
+    }
+    return ldHas(loc.total_launch_count) ? ldNum(loc.total_launch_count) : 0;
+  }
+
+  private goPad(): void {
+    const name: string = this.padName();
+    if (name.length === 0) {
+      return;
+    }
+    // LL2 的 pad 对象没带 id，只能拿名字去 pads 数据集反查，所以 id 传空串；
+    // 带上 location.name 做二次消歧（"Unknown Pad" 有好几条）。
+    Nav.pushPad(new PadNavParam('', name, this.padLocationName()));
   }
 
   /** 六格统计概览；LL2 直接给了累计数，不用自己算。值为空/0 的格跳过 */
@@ -1120,19 +1820,19 @@ export struct LaunchDetailView {
     if (ldHas(globalYear)) {
       out.push(new LdCell('本年全球', ldNumText(ldNum(globalYear))));
     }
-    const agencyAll: number | null | undefined = this.item.agency_launch_attempt_count;
+    const agencyAll: number | undefined = this.item.agency_launch_attempt_count;
     if (ldHas(agencyAll)) {
       out.push(new LdCell('机构累计', ldNumText(ldNum(agencyAll))));
     }
-    const agencyYear: number | null | undefined = this.item.agency_launch_attempt_count_year;
+    const agencyYear: number | undefined = this.item.agency_launch_attempt_count_year;
     if (ldHas(agencyYear)) {
       out.push(new LdCell('本年机构', ldNumText(ldNum(agencyYear))));
     }
-    const padAll: number | null | undefined = this.item.pad_launch_attempt_count;
+    const padAll: number | undefined = this.item.pad_launch_attempt_count;
     if (ldHas(padAll)) {
       out.push(new LdCell('工位累计', ldNumText(ldNum(padAll))));
     }
-    const padYear: number | null | undefined = this.item.pad_launch_attempt_count_year;
+    const padYear: number | undefined = this.item.pad_launch_attempt_count_year;
     if (ldHas(padYear)) {
       out.push(new LdCell('本年工位', ldNumText(ldNum(padYear))));
     }
@@ -1140,7 +1840,7 @@ export struct LaunchDetailView {
   }
 
   /** 一格数组 → 两列行数组（末行可能只有左边） */
-  private toRows(cells: LdCell[]): LdCellRow[] {
+  private gridRows(cells: LdCell[]): LdCellRow[] {
     const rows: LdCellRow[] = [];
     for (let i = 0; i < cells.length; i = i + 2) {
       const left: LdCell = cells[i];
@@ -1151,135 +1851,8 @@ export struct LaunchDetailView {
     return rows;
   }
 
-  // ============ UI：返回栏 ============
+  // ============ 派生数据：任务信息图 ============
 
-  /**
-   * 自绘顶部栏。NavDestination 那边 hideTitleBar(true)，标题由这里画，
-   * 这样「‹ 返回」的热区、字号、颜色都能自己定（与火箭详情页同一套）。
-   */
-  @Builder
-  topBar() {
-    Row() {
-      Row() {
-        Text('‹')
-          .fontSize(20)
-          .fontColor(TEXT_MAIN)
-          .lineHeight(20)
-        Text('返回')
-          .fontSize(14)
-          .fontColor(TEXT_SUB)
-          .margin({ left: 2 })
-      }
-      .alignItems(VerticalAlign.Center)
-      // 上下各 10vp 把热区撑到约 40vp，别让 14vp 的字直接当可点区域
-      .padding({ right: 12, top: 10, bottom: 10 })
-      .onClick(() => {
-        Nav.pop();
-      })
-
-      Text(this.titleText().length > 0 ? this.titleText() : '发射详情')
-        .fontSize(15)
-        .fontWeight(FontWeight.Bold)
-        .fontColor(TEXT_MAIN)
-        .maxLines(1)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
-        .layoutWeight(1)
-
-      // 收藏星标。放最右而不是紧贴返回键：收藏是本页的「操作」，
-      // 返回是「导航」，两者分居两端才不会点错。空态的引导文案也写的是「右上角 ☆」。
-      //
-      // 热区靠 padding 撑：20vp 的字直接当可点区域只有 20vp 见方，太难点。
-      Text(this.faved ? '★' : '☆')
-        .fontSize(20)
-        .fontColor(this.faved ? STAR : TEXT_SUB)
-        .padding({ left: 12, top: 8, bottom: 8, right: 2 })
-        .onClick(() => {
-          this.onTapFav();
-        })
-    }
-    .width('100%')
-    .alignItems(VerticalAlign.Center)
-    .padding({ left: PAGE_PAD, right: PAGE_PAD })
-    .backgroundColor(BG_PRIMARY)
-  }
-
-  // ============ UI：Hero ============
-
-  @Builder
-  hero() {
-    Column() {
-      Stack({ alignContent: Alignment.BottomEnd }) {
-        if (this.imageSrc().length > 0 && !this.imgErr) {
-          Image(this.imageSrc())
-            .width('100%')
-            .height(HERO_H)
-            .objectFit(ImageFit.Cover)
-            .backgroundColor(MEDIA_BG)
-            .onError(() => {
-              // 破图退回色块：留一块 220vp 的空白比色块难看得多
-              this.imgErr = true;
-            })
-        } else {
-          Column() {
-            Text('暂无任务图')
-              .fontSize(11)
-              .fontColor(TEXT_DIM)
-          }
-          .width('100%')
-          .height(HERO_H)
-          .backgroundColor(MEDIA_BG)
-          .justifyContent(FlexAlign.Center)
-          .alignItems(HorizontalAlign.Center)
-        }
-
-        // 署名压在右下角：半透明底保证压在任意亮度的图上都能读
-        if (this.imageCredit().length > 0) {
-          Text(this.imageCredit())
-            .fontSize(9.5)
-            .fontColor(TEXT_SUB)
-            .maxLines(1)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
-            // TextAttribute 上没有 maxWidth（那是通用属性里名字叫 constraintSize 的东西），
-            // 用百分比宽度 + 右对齐等效实现「最多占 70% 宽」
-            .width('70%')
-            .textAlign(TextAlign.End)
-            .padding({ left: 6, right: 6, top: 2, bottom: 2 })
-            .borderRadius(4)
-            .backgroundColor('#66000000')
-            .margin({ right: 10, bottom: 10 })
-        }
-      }
-      .width('100%')
-      .height(HERO_H)
-      // 圆角裁切用 clip，不用 overflow（Column 属性上没有 overflow）
-      .clip(true)
-
-      Row() {
-        Text(this.titleText())
-          .fontSize(18)
-          .fontWeight(FontWeight.Bold)
-          .fontColor(TEXT_MAIN)
-          .maxLines(2)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-          .layoutWeight(1)
-
-        Text(this.statusText())
-          .fontSize(10.5)
-          .fontWeight(FontWeight.Bold)
-          .fontColor(this.statusColor())
-          .backgroundColor(this.statusBg())
-          .padding({ left: 8, right: 8, top: 3, bottom: 3 })
-          .borderRadius(6)
-          .margin({ left: 8 })
-      }
-      .width('100%')
-      .alignItems(VerticalAlign.Top)
-      .padding({ left: PAGE_PAD, right: PAGE_PAD, top: 12, bottom: 2 })
-    }
-    .width('100%')
-  }
-
-  /** 任务信息图地址（可能为空串，调用方自己判空） */
   private infoSrc(): string {
     return strOf(this.item.infographic).trim();
   }
@@ -1289,170 +1862,775 @@ export struct LaunchDetailView {
     return this.infoSrc().length > 0 && !this.infoErr;
   }
 
-  private imageSrc(): string {
-    return strOf(this.item.image);
+  // ============ 派生数据：时间线折叠 ============
+
+  /**
+   * 折叠态从哪一条开始：第一个「还没发生」的节点。
+   * 全部已过（发射完成）则退回到最后 4 条，把起飞到入轨这段留下来 ——
+   * 与小程序 pickTimeline 的 start 计算完全一致。
+   */
+  private tlStart(): number {
+    const n: number = this.tlRows.length;
+    if (n === 0) {
+      return 0;
+    }
+    const t0: number = parseTime(this.item.net);
+    if (t0 <= 0) {
+      return 0;
+    }
+    const now: number = Date.now();
+    for (let i = 0; i < n; i++) {
+      if (t0 + this.tlRows[i].sec * 1000 >= now) {
+        return i;
+      }
+    }
+    return Math.max(0, n - TL_PICK);
   }
 
-  private imageCredit(): string {
-    return strOf(this.item.imageCredit);
+  /** 要画的节点：展开时全给，折叠时只给「接下来 4 步」 */
+  private tlDisplay(): LdTimelineRow[] {
+    const n: number = this.tlRows.length;
+    if (n === 0) {
+      return [];
+    }
+    if (this.tlOpen) {
+      return this.tlRows;
+    }
+    const start: number = this.tlStart();
+    const out: LdTimelineRow[] = [];
+    for (let i = start; i < n && out.length < TL_PICK; i++) {
+      out.push(this.tlRows[i]);
+    }
+    return out;
+  }
+
+  /** 折叠时还没显示出来的条数（0 = 不出现「展开全部」） */
+  private tlMoreCount(): number {
+    if (this.tlOpen) {
+      return 0;
+    }
+    return Math.max(0, this.tlTotal - this.tlStart() - TL_PICK);
+  }
+
+  // ============ 派生数据：相关报道 ============
+
+  /**
+   * 打开资讯详情。
+   *
+   * 小程序是在详情页就地弹 news-detail 弹窗；鸿蒙侧有独立的 ArticleDetailView
+   * （ROUTE_ARTICLE 已在 PageMap 注册），所以改成正常压栈 —— 返回后还能回到本页。
+   * ArticleNavParam 是「无参构造 + 逐字段赋值」（10 个字段里 9 个都是 string，
+   * 全参构造写错顺序编译器不会报），见 routes/NavParam.ets 的注释。
+   */
+  private openArticle(n: NewsItem): void {
+    const p: ArticleNavParam = new ArticleNavParam();
+    p.id = String(n.id);
+    p.title = strOf(n.title);
+    p.titleZh = strOf(n.titleZh);
+    p.summary = strOf(n.summary);
+    p.summaryZh = strOf(n.summaryZh);
+    p.image = strOf(n.image);
+    p.site = strOf(n.site);
+    p.url = strOf(n.url);
+    p.at = strOf(n.at);
+    const refs: NewsLaunchRef[] | undefined = n.launchRefs;
+    p.launchRefs = refs === undefined ? [] : refs;
+    Nav.pushArticle(p);
+  }
+
+  // ============ UI：固定顶栏 ============
+
+  /**
+   * 自绘顶栏（对位 nav-bar.vue）。
+   *
+   * 三段式：左 32vp 圆形返回 / 中 23vp w600 居中标题 / 右 20vp 收藏星标。
+   * 左右两侧容器都定宽 32，标题才是真正居中（不是「剩余空间居中」）。
+   * 标题只在滚动变实色后出现 —— 透明时压在首图上，文字会与图打架。
+   */
+  @Builder
+  navBar() {
+    Row() {
+      // 返回：半透明黑底圆形 + ‹；变实色后圆底去掉（nav-bar.vue 的 .nav.solid .nav-back）
+      Row() {
+        Text('‹')
+          .fontSize(23)
+          .fontColor(TEXT_MAIN)
+          .lineHeight(23)
+          .margin({ top: -2 })
+      }
+      .width(32)
+      .height(32)
+      .borderRadius(16)
+      .backgroundColor(this.navSolid ? '#00000000' : '#52000000')
+      .justifyContent(FlexAlign.Center)
+      .alignItems(VerticalAlign.Center)
+      .onClick(() => {
+        Nav.pop();
+      })
+
+      Row() {
+        if (this.navSolid) {
+          Text(this.titleText())
+            .fontSize(23)
+            .fontWeight(600)
+            .fontColor(TEXT_MAIN)
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .textAlign(TextAlign.Center)
+            .width('100%')
+        }
+      }
+      .layoutWeight(1)
+      .justifyContent(FlexAlign.Center)
+
+      Row() {
+        if (this.found) {
+          Text(this.faved ? '★' : '☆')
+            .fontSize(20)
+            .fontColor(this.faved ? STAR : TEXT_SUB)
+        }
+      }
+      .width(32)
+      .justifyContent(FlexAlign.End)
+      .onClick(() => {
+        if (this.found) {
+          this.onTapFav();
+        }
+      })
+    }
+    .width('100%')
+    .height(NAV_H)
+    .alignItems(VerticalAlign.Center)
+    .padding({ left: 10, right: 10 })
+    .backgroundColor(this.navSolid ? NAV_SOLID_BG : '#00000000')
+    .border({ width: { bottom: this.navSolid ? 0.5 : 0 }, color: '#0DFFFFFF' })
+  }
+
+  // ============ UI：首图 ============
+
+  /**
+   * 首图区（对位 launch-hero.vue）：330vp 高、通栏、压在顶栏下面。
+   *
+   * 三层：
+   *   1. 图（多图走 Swiper 自动轮播 5s；单图直接 Image；无图是 135° 渐变、**无文字**）
+   *   2. 底部 100vp 渐隐遮罩（把图融进 #0A0E17，正文就压在这段上）
+   *   3. 右上指示点 / 右下「图片库 N」磨砂胶囊
+   *
+   * 有意差异：首图**不画 imageCredit**（小程序首图也不画，署名只在看图器副行里）。
+   */
+  @Builder
+  heroBlock() {
+    Stack({ alignContent: Alignment.TopStart }) {
+      if (this.photos.length > 1) {
+        Swiper() {
+          ForEach(this.photos, (p: LdPhoto, i: number) => {
+            Image(p.thumb)
+              .width('100%')
+              .height(HERO_H)
+              .objectFit(ImageFit.Cover)
+              .backgroundColor(MEDIA_BG)
+              .onError(() => {
+                // 破图只影响这一张：多图时其余几张照常轮播
+                this.imgErr = true;
+              })
+              .onClick(() => {
+                this.heroIdx = i;
+                this.openHero();
+              })
+          }, (p: LdPhoto, i: number) => 'hero' + p.thumb + String(i))
+        }
+        .width('100%')
+        .height(HERO_H)
+        .autoPlay(true)
+        .interval(5000)
+        .loop(true)
+        .duration(400)
+        .indicator(false)
+        .onChange((idx: number) => {
+          this.heroIdx = idx;
+        })
+      } else if (this.photos.length === 1 && !this.imgErr) {
+        Image(this.photos[0].thumb)
+          .width('100%')
+          .height(HERO_H)
+          .objectFit(ImageFit.Cover)
+          .backgroundColor(MEDIA_BG)
+          .onError(() => {
+            this.imgErr = true;
+          })
+          .onClick(() => {
+            this.openHero();
+          })
+      } else {
+        // 无图占位：135° 渐变，**不写字**（小程序 .hero-placeholder 里是空的 view）
+        Column()
+          .width('100%')
+          .height(HERO_H)
+          .linearGradient({
+            angle: 135,
+            colors: [
+              [HERO_FROM, 0.0],
+              [HERO_TO, 1.0]
+            ]
+          })
+      }
+
+      // 底部渐隐：to bottom → angle 180；纯装饰，必须让事件穿透
+      Column()
+        .width('100%')
+        .height(100)
+        .align(Alignment.BottomStart)
+        .linearGradient({
+          angle: 180,
+          colors: [
+            ['#000A0E17', 0.0],
+            ['#FF0A0E17', 1.0]
+          ]
+        })
+        .hitTestBehavior(HitTestMode.None)
+
+      // 轮播指示点：5vp，当前那张拉成 13vp 短胶囊（launch-hero.vue 的 .hero-dot）
+      if (this.photos.length > 1) {
+        Row() {
+          ForEach(this.photos, (p: LdPhoto, i: number) => {
+            Row()
+              .width(this.heroIdx === i ? 13 : 5)
+              .height(5)
+              .borderRadius(3)
+              .backgroundColor(this.heroIdx === i ? '#F2FFFFFF' : '#61FFFFFF')
+              .margin({ right: 5 })
+          }, (p: LdPhoto, i: number) => 'dot' + String(i))
+        }
+        .align(Alignment.TopEnd)
+        .margin({ top: NAV_H + 10, right: 16 })
+      }
+
+      // 图片库入口：磨砂胶囊「2×2 点阵 + 图片库 + N」
+      // 鸿蒙侧没有 media 页，点了进视频库（见文件头取舍 5）
+      if (this.photos.length > 0) {
+        Row() {
+          Column() {
+            Row() {
+              Row().width(3).height(3).borderRadius(1.5).backgroundColor('#E6FFFFFF').margin({ right: 2 })
+              Row().width(3).height(3).borderRadius(1.5).backgroundColor('#E6FFFFFF')
+            }
+            Row() {
+              Row().width(3).height(3).borderRadius(1.5).backgroundColor('#E6FFFFFF').margin({ right: 2 })
+              Row().width(3).height(3).borderRadius(1.5).backgroundColor('#E6FFFFFF')
+            }
+            .margin({ top: 2 })
+          }
+          .width(8)
+          .height(8)
+          .margin({ right: 5 })
+
+          Text('图片库')
+            .fontSize(11)
+            .fontColor('#EBFFFFFF')
+
+          Text(String(this.photos.length))
+            .fontSize(11)
+            .fontColor('#99FFFFFF')
+            .margin({ left: 4 })
+        }
+        .align(Alignment.BottomEnd)
+        .padding({ left: 9, right: 9, top: 3.5, bottom: 3.5 })
+        .borderRadius(999)
+        .backgroundColor('#24FFFFFF')
+        .border({ width: 1, color: '#38FFFFFF' })
+        // 磨砂：blur 20rpx = 10vp（半透明底 + 背景模糊，压在任何亮度的图上都能读）
+        .backdropBlur(10)
+        .margin({ right: 12, bottom: 40 })
+        .onClick(() => {
+          this.goMedia();
+        })
+      }
+    }
+    .width('100%')
+    .height(HERO_H)
+    .clip(true)
+  }
+
+  // ============ UI：标题行 ============
+
+  @Builder
+  headBlock() {
+    Row() {
+      Text(this.titleText())
+        .fontSize(20)
+        .fontWeight(600)
+        .fontColor(TEXT_MAIN)
+        .lineHeight(28)
+        .layoutWeight(1)
+        .maxLines(3)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+      Text(this.statusText())
+        .fontSize(12)
+        .fontWeight(600)
+        .fontColor(this.badgeColor())
+        .backgroundColor(this.badgeBg())
+        .padding({ left: 9, right: 9, top: 3, bottom: 3 })
+        .borderRadius(4)
+        .margin({ left: 10, top: 4 })
+    }
+    .width('100%')
+    .alignItems(VerticalAlign.Top)
   }
 
   // ============ UI：通用卡标题 / 标签 ============
 
   /**
    * 卡标题。**不设 width('100%')**：它经常和 Blank() 同处一个 Row
-   * （右侧挂「北京时间」「N 篇」这类小字），标题占满整行会把右边挤掉。
+   * （右侧挂「展开全部」「N 篇」这类小字），标题占满整行会把右边挤掉。
    * 卡片是 alignItems(Start) 的 Column，Text 自然左对齐。
    */
   @Builder
   cardTitle(text: string) {
     Text(text)
       .fontSize(15)
-      .fontWeight(FontWeight.Bold)
-      .fontColor(TEXT_MAIN)
+      .fontWeight(600)
+      // 小程序 .card-title 是青色 #38bdf8（30rpx w600），不是白字
+      .fontColor(ACCENT)
+      // margin-bottom 20rpx = 10vp；这里取 6，因为各块自己还带 4~6vp 的 margin-top
+      .margin({ bottom: 6 })
   }
 
+  /** 小胶囊（轨道 / 可复用 / 几级这类标签） */
   @Builder
-  chip(text: string, accent: boolean) {
+  chipTag(text: string, accent: boolean) {
     Text(text)
-      .fontSize(11)
-      .fontColor(accent ? ACCENT : TEXT_SUB)
-      .backgroundColor(CHIP_BG)
-      .border({ width: 1, color: accent ? '#1E4560' : CHIP_BORDER })
-      .borderRadius(6)
-      .padding({ left: 8, right: 8, top: 3, bottom: 3 })
+      .fontSize(11.5)
+      .fontColor(accent ? ACCENT : '#7DD3FC')
+      .backgroundColor(accent ? '#2E38BDF8' : '#1A38BDF8')
+      .borderRadius(4)
+      .padding({ left: 9, right: 9, top: 3, bottom: 3 })
       .margin({ right: 6, bottom: 6 })
   }
 
   // ============ UI：倒计时 ============
 
+  /**
+   * 倒计时。
+   *
+   * 小程序这张卡里**只有一行 Countdown**（launch-content.vue:14-16）：
+   * 没有「距离发射」标题、也没有「北京时间」角标 —— 两者都删掉。
+   */
   @Builder
   countdownCard() {
     Column() {
-      Row() {
-        this.cardTitle('距离发射')
-        Blank()
-        Text('北京时间')
-          .fontSize(11)
-          .fontColor(TEXT_DIM)
-      }
-      .width('100%')
-      .alignItems(VerticalAlign.Center)
-
       // 自定义组件不能用 .margin()，外面套一层 Row 再给边距（各 SDK 版本差异最小的写法）
       Row() {
         Countdown({ net: this.item.net, sizeMode: 'lg' })
       }
       .width('100%')
-      .margin({ top: 12 })
     }
     .width('100%')
     .alignItems(HorizontalAlign.Start)
     .padding(CARD_PAD)
     .backgroundColor(CARD_BG)
     .borderRadius(CARD_RADIUS)
-    .margin({ top: CARD_GAP })
+    .margin({ top: 13 })
   }
 
-  // ============ UI：发射时刻 ============
+  // ============ UI：发射周期 ============
 
+  /**
+   * 发射周期（对位 launch-content.vue:18-35）。
+   *
+   * 行结构：左 5vp 圆点 + 名称 + 右侧相对时间。折叠态只给接下来 4 步，
+   * 右上角「展开全部 N 步 / 收起」切换；**没有「共 N 条」尾注**。
+   */
   @Builder
-  whenCard() {
+  timelineCard() {
     Column() {
       Row() {
-        this.cardTitle('发射时间')
+        Text('发射周期')
+          .fontSize(15)
+          .fontWeight(600)
+          .fontColor('#E2E8F0')
+
         Blank()
-        Text('北京时间')
-          .fontSize(11)
-          .fontColor(TEXT_DIM)
+
+        if (this.tlOpen) {
+          Text('收起')
+            .fontSize(12)
+            .fontColor(ACCENT)
+            .padding({ left: 6, top: 4, bottom: 4 })
+            .onClick(() => {
+              this.tlOpen = false;
+            })
+        } else if (this.tlMoreCount() > 0) {
+          Text('展开全部 ' + String(this.tlTotal) + ' 步')
+            .fontSize(12)
+            .fontColor(ACCENT)
+            .padding({ left: 6, top: 4, bottom: 4 })
+            .onClick(() => {
+              this.tlOpen = true;
+            })
+        }
       }
       .width('100%')
       .alignItems(VerticalAlign.Center)
 
-      Text(formatLaunchTime(this.item.net))
-        .fontSize(26)
-        .fontWeight(FontWeight.Bold)
-        .fontColor(TEXT_MAIN)
-        .margin({ top: 10 })
+      ForEach(this.tlDisplay(), (row: LdTimelineRow, idx: number) => {
+        Row() {
+          // 圆点：5vp（10rpx），已发生的压成 #3B4658
+          Column() {
+            Column()
+              .width(5)
+              .height(5)
+              .borderRadius(2.5)
+              .backgroundColor(row.past ? '#3B4658' : ACCENT)
+          }
+          .width(9)
+          .height(5)
+          .justifyContent(FlexAlign.Start)
 
-      Text(relativeTime(this.item.net))
-        .fontSize(12)
-        .fontColor(ACCENT)
+          Text(row.name)
+            .fontSize(13.5)
+            .fontColor(row.past ? '#5A6478' : TEXT_SUB)
+            .lineHeight(18)
+            .layoutWeight(1)
+            .maxLines(2)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .margin({ left: 9 })
+
+          Text(row.tag)
+            .fontSize(12)
+            .fontColor(row.past ? '#5A6478' : '#7D8BA0')
+            .lineHeight(18)
+            .margin({ left: 8 })
+        }
+        .width('100%')
+        .alignItems(VerticalAlign.Center)
+        .padding({ top: 5.5, bottom: 5.5 })
+      }, (row: LdTimelineRow, idx: number) => 'tl' + String(idx) + row.tag + row.name)
+    }
+    .width('100%')
+    .alignItems(HorizontalAlign.Start)
+    .padding({ left: 14, right: 14, top: 13, bottom: 6 })
+    .backgroundColor(CARD_BG)
+    .borderRadius(CARD_RADIUS)
+    .margin({ top: 12 })
+  }
+
+  // ============ UI：分享 / 收藏 / 提醒 ============
+
+  /**
+   * 三枚胶囊（对位 launch-content.vue:44-57 的 .meta-acts）。
+   *
+   * 三者都必须读 this.faved / this.remindOn 这类状态，且**不通过 @Builder 传参**取文本 ——
+   * @Builder 按值传参不建立响应式依赖，收藏后「收藏 → 已收藏」会不刷新。
+   *
+   * 两处鸿蒙差异（注释在此，报告里也写一遍）：
+   *   · 分享：小程序是 <button open-type="share"> 走微信转发；鸿蒙没有系统分享面板，
+   *     改成 toast 提示（不假装能分享，也不静默无反应）。
+   *   · 提醒：数据层没有提醒队列（没有定时任务，也不该由一个页面私发通知），
+   *     点了一律 toast「提醒功能开发中」，不做「已提醒」这种假状态。
+   */
+  @Builder
+  metaActs() {
+    Row() {
+      // 分享：⤴ + 分享（.share-btn，灰字、白 6% 底）
+      Row() {
+        Text('⤴')
+          .fontSize(13)
+          .fontColor(TEXT_DIM)
+        Text('分享')
+          .fontSize(12)
+          .fontColor(TEXT_DIM)
+          .margin({ left: 4 })
+      }
+      .padding({ left: 5, right: 5, top: 2, bottom: 2 })
+      .borderRadius(20)
+      .backgroundColor('#0FFFFFFF')
+      .border({ width: 1, color: '#14FFFFFF' })
+      .margin({ left: 10 })
+      .onClick(() => {
+        this.toast('鸿蒙版暂不支持系统分享');
+      })
+
+      // 收藏：★/☆ + 收藏/已收藏（.fav；on = 琥珀底 + 琥珀字，与顶栏星标共用 faved）
+      Row() {
+        Text(this.faved ? '★' : '☆')
+          .fontSize(13)
+          .fontColor(this.faved ? STAR : TEXT_DIM)
+        Text(this.faved ? '已收藏' : '收藏')
+          .fontSize(12)
+          .fontColor(this.faved ? STAR : TEXT_DIM)
+          .margin({ left: 4 })
+      }
+      .padding({ left: 5, right: 5, top: 2, bottom: 2 })
+      .borderRadius(20)
+      .backgroundColor(this.faved ? '#24F5C33B' : '#0FFFFFFF')
+      .border({ width: 1, color: this.faved ? '#59F5C33B' : '#14FFFFFF' })
+      .margin({ left: 10 })
+      .onClick(() => {
+        this.onTapFid();
+      })
+
+      // 提醒：纯 CSS 钟形（上圆角矩形 + 底部横线），不用 emoji。
+      // 基线 .remind 本身就是蓝底蓝线（rgba(56,189,248,.1) / .28），不是灰胶囊
+      Row() {
+        Column() {
+          Column()
+            .width(10)
+            .height(9.5)
+            .border({ width: { left: 1, right: 1, top: 1 }, color: ACCENT })
+            .borderRadius({ topLeft: 5, topRight: 5 })
+          Column()
+            .width(13)
+            .height(1)
+            .borderRadius(1)
+            .backgroundColor(ACCENT)
+        }
+        .width(13)
+        .height(11)
+        .alignItems(HorizontalAlign.Center)
+        .justifyContent(FlexAlign.End)
+
+        Text('提醒')
+          .fontSize(12)
+          .fontColor(ACCENT)
+          .margin({ left: 4 })
+      }
+      .padding({ left: 5, right: 5, top: 2, bottom: 2 })
+      .borderRadius(20)
+      .backgroundColor('#1A38BDF8')
+      .border({ width: 1, color: '#4738BDF8' })
+      .margin({ left: 10 })
+      .onClick(() => {
+        this.toast('提醒功能开发中');
+      })
+    }
+    .alignItems(VerticalAlign.Center)
+  }
+
+  /** 收藏胶囊的点击入口（与 onTapFav 同一个实现，单独一层是为了注释能写在这里） */
+  private onTapFid(): void {
+    this.onTapFav();
+  }
+
+  // ============ UI：发射时刻 ============
+
+  /**
+   * 发射时刻卡（对位 launch-content.vue:37-64）。
+   *
+   * 大字是**钟点**（76rpx → 38vp w700、letter-spacing 2rpx → 1vp），
+   * 下面一行拆成「日期 13vp #a0aec0 + 相对时间 12vp #38bdf8」——
+   * 小程序里日期与相对时间是同一行的两个 text，不是一行「M月D日 HH:mm」。
+   * 顶行左侧「发射时间 + 北京时间」，右侧三胶囊。
+   */
+  @Builder
+  whenCard() {
+    Column() {
+      Row() {
+        Text('发射时间')
+          .fontSize(13)
+          .fontColor(TEXT_SUB)
+        Text('北京时间')
+          .fontSize(11)
+          .fontColor(TEXT_DIM)
+          .margin({ left: 6 })
+
+        Blank()
+
+        this.metaActs()
+      }
+      .width('100%')
+      .alignItems(VerticalAlign.Center)
+
+      Text(clock(this.item.net).length > 0 ? clock(this.item.net) : '待定')
+        .fontSize(38)
+        .fontWeight(700)
+        .fontColor(TEXT_MAIN)
+        .lineHeight(43)
+        .letterSpacing(1)
         .margin({ top: 2 })
 
-      if (this.hasWindow()) {
-        Divider()
-          .color(DIVIDER)
-          .margin({ top: 12, bottom: 10 })
+      Row() {
+        Text(longDate(this.item.net).length > 0 ? longDate(this.item.net) : '时间待定')
+          .fontSize(13)
+          .fontColor('#A0AEC0')
 
-        Row() {
-          Text('计划发射窗口')
-            .fontSize(11)
-            .fontColor(TEXT_DIM)
-          Blank()
+        if (relativeTime(this.item.net).length > 0) {
+          Text(relativeTime(this.item.net))
+            .fontSize(12)
+            .fontColor(ACCENT)
+            .margin({ left: 8 })
+        }
+      }
+      .width('100%')
+      .alignItems(VerticalAlign.Center)
+      .margin({ top: 2 })
+    }
+    .width('100%')
+    .alignItems(HorizontalAlign.Start)
+    .padding({ left: 15, right: 15, top: 13, bottom: 12 })
+    .borderRadius(CARD_RADIUS)
+    .linearGradient({
+      angle: 135,
+      colors: [
+        ['#17243A', 0.0],
+        ['#141A26', 1.0]
+      ]
+    })
+    .border({ width: 1, color: '#1F38BDF8' })
+    .margin({ top: 10 })
+  }
+
+  // ============ UI：计划发射窗口 ============
+
+  /**
+   * 计划发射窗口（对位 launch-content.vue:68-88）。
+   *
+   * 结构是「标题 + 轴（两节点一连线）+ 两端时刻」：
+   *   节点 6vp、连线 1vp rgba(56,189,248,.45)、两端时刻 17vp w600。
+   * 原来只有一条 Divider + 两列小字，读不出「这是一段窗口」。
+   */
+  @Builder
+  winCard() {
+    Column() {
+      Row() {
+        Text('计划发射窗口')
+          .fontSize(13)
+          .fontColor(TEXT_SUB)
+
+        Blank()
+
+        if (this.windowSpan().length > 0) {
           Text(this.windowSpan())
             .fontSize(11)
             .fontColor(TEXT_DIM)
         }
-        .width('100%')
-
-        Row() {
-          Column() {
-            Text(ldClock(this.winStart()))
-              .fontSize(15)
-              .fontWeight(FontWeight.Bold)
-              .fontColor(TEXT_MAIN)
-            Text('开始')
-              .fontSize(10.5)
-              .fontColor(TEXT_DIM)
-              .margin({ top: 2 })
-          }
-          .layoutWeight(1)
-          .alignItems(HorizontalAlign.Start)
-
-          Column() {
-            Text(ldClock(this.winEnd()))
-              .fontSize(15)
-              .fontWeight(FontWeight.Bold)
-              .fontColor(TEXT_MAIN)
-            Text('结束')
-              .fontSize(10.5)
-              .fontColor(TEXT_DIM)
-              .margin({ top: 2 })
-          }
-          .layoutWeight(1)
-          .alignItems(HorizontalAlign.End)
-        }
-        .width('100%')
-        .margin({ top: 6 })
-        .alignItems(VerticalAlign.Top)
       }
+      .width('100%')
+      .alignItems(VerticalAlign.Center)
+
+      // 轴：节点 6vp + 连线 1vp
+      Row() {
+        Column()
+          .width(6)
+          .height(6)
+          .borderRadius(3)
+          .backgroundColor(ACCENT)
+
+        Column()
+          .layoutWeight(1)
+          .height(1)
+          .backgroundColor('#7338BDF8')
+          .margin({ left: 3, right: 3 })
+
+        Column()
+          .width(6)
+          .height(6)
+          .borderRadius(3)
+          .backgroundColor(ACCENT)
+      }
+      .width('100%')
+      .alignItems(VerticalAlign.Center)
+      .margin({ top: 11 })
+
+      Row() {
+        Column() {
+          Text(clock(this.winStart()).length > 0 ? clock(this.winStart()) : '--:--')
+            .fontSize(17)
+            .fontWeight(600)
+            .fontColor('#E2E8F0')
+            .lineHeight(20)
+          Text('开始')
+            .fontSize(11)
+            .fontColor(TEXT_DIM)
+            .margin({ top: 1 })
+        }
+        .alignItems(HorizontalAlign.Start)
+
+        Blank()
+
+        Column() {
+          Text(clock(this.winEnd()).length > 0 ? clock(this.winEnd()) : '--:--')
+            .fontSize(17)
+            .fontWeight(600)
+            .fontColor('#E2E8F0')
+            .lineHeight(20)
+          Text('结束')
+            .fontSize(11)
+            .fontColor(TEXT_DIM)
+            .margin({ top: 1 })
+        }
+        .alignItems(HorizontalAlign.End)
+      }
+      .width('100%')
+      .alignItems(VerticalAlign.Top)
+      .margin({ top: 5 })
     }
     .width('100%')
     .alignItems(HorizontalAlign.Start)
-    .padding(CARD_PAD)
+    .padding({ left: 15, right: 15, top: 12, bottom: 11 })
     .backgroundColor(CARD_BG)
     .borderRadius(CARD_RADIUS)
-    .margin({ top: CARD_GAP })
+    .margin({ top: 10 })
   }
 
   // ============ UI：任务详情 ============
 
+  /**
+   * 任务详情卡（对位 launch-content.vue:91-117）。
+   *
+   * 本轮补上「任务名 / 任务类型」两条 label-value 行（宽 85vp、14vp），
+   * 类型不再只以 chip 形式出现；轨道仍用 chip（缩写 + 全称并排更好扫）。
+   * 描述 29rpx → 14.5vp、lh1.75、#cbd5e0，超过 120 字折叠 4 行 + 展开全文。
+   */
   @Builder
   missionCard() {
     Column() {
       this.cardTitle('任务详情')
 
-      if (this.orbitText().length > 0 || this.missionType().length > 0) {
+      if (this.missionName().length > 0) {
+        Row() {
+          Text('任务名')
+            .fontSize(14)
+            .fontColor(TEXT_DIM)
+            .width(85)
+          Text(this.missionName())
+            .fontSize(14)
+            .fontColor('#E2E8F0')
+            .lineHeight(21)
+            .textAlign(TextAlign.End)
+            .layoutWeight(1)
+        }
+        .width('100%')
+        .alignItems(VerticalAlign.Top)
+        .padding({ top: 7, bottom: 7 })
+        .border({ width: { top: 0.5 }, color: '#0AFFFFFF' })
+        .margin({ top: 6 })
+      }
+
+      if (this.missionType().length > 0) {
+        Row() {
+          Text('任务类型')
+            .fontSize(14)
+            .fontColor(TEXT_DIM)
+            .width(85)
+          Text(this.missionType())
+            .fontSize(14)
+            .fontColor('#E2E8F0')
+            .lineHeight(21)
+            .textAlign(TextAlign.End)
+            .layoutWeight(1)
+        }
+        .width('100%')
+        .alignItems(VerticalAlign.Top)
+        .padding({ top: 7, bottom: 7 })
+        .border({ width: { top: 0.5 }, color: '#0AFFFFFF' })
+      }
+
+      if (this.orbitText().length > 0) {
         // 必须用 Flex 而不是 Row：Row 是线性布局、没有 flexWrap，
-        // 轨道名 + 任务类型两个 chip 挤不下时会被压缩变形而不是折行。
+        // 轨道名 + 全称挤不下时会被压缩变形而不是折行。
         Flex({ wrap: FlexWrap.Wrap, alignItems: ItemAlign.Center }) {
-          if (this.orbitText().length > 0) {
-            this.chip(this.orbitText(), true)
-          }
-          if (this.missionType().length > 0) {
-            this.chip(this.missionType(), false)
-          }
+          this.chipTag(this.orbitText(), true)
         }
         .width('100%')
         .margin({ top: 8 })
@@ -1460,9 +2638,9 @@ export struct LaunchDetailView {
 
       if (this.missionDesc().length > 0) {
         Text(this.missionDesc())
-          .fontSize(13)
+          .fontSize(14.5)
           .fontColor(TEXT_SUB)
-          .lineHeight(20)
+          .lineHeight(25)
           .width('100%')
           .maxLines(this.descLines())
           .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -1471,7 +2649,7 @@ export struct LaunchDetailView {
         if (this.canExpandDesc()) {
           Row() {
             Text(this.descExpanded ? '收起' : '展开全文')
-              .fontSize(12)
+              .fontSize(13)
               .fontColor(ACCENT)
             Text(this.descExpanded ? '⌃' : '⌄')
               .fontSize(11)
@@ -1497,10 +2675,9 @@ export struct LaunchDetailView {
   // ============ UI：任务信息图 ============
 
   /**
-   * 任务信息图是竖版长图（小程序用 mode="widthFix"，即宽度撑满、高度按原图比例）。
-   * Image 不设 height 时 ArkUI 就按 intrinsic 比例自适应，所以这里只给 width，
-   * 外层再包一个 width('100%') 的容器 —— 长图在滚动容器里不能设固定高度，
-   * 否则要么压扁要么裁掉。
+   * 任务信息图是竖版长图（小程序 mode="widthFix"，即宽度撑满、高度按原图比例）。
+   * Image 不设 height 时 ArkUI 就按 intrinsic 比例自适应，所以这里只给 width。
+   * 圆角按任务书取 6vp（小程序 .infographic 是 12rpx）。
    */
   @Builder
   infoCard() {
@@ -1511,7 +2688,8 @@ export struct LaunchDetailView {
         Image(this.infoSrc())
           .width('100%')
           .objectFit(ImageFit.Contain)
-          .borderRadius(10)
+          .borderRadius(6)
+          .backgroundColor('#0F1520')
           .onError(() => {
             // 破图不留在页面上占一大块空白：整卡直接不显示
             this.infoErr = true;
@@ -1531,121 +2709,98 @@ export struct LaunchDetailView {
     .margin({ top: CARD_GAP })
   }
 
-  // ============ UI：发射周期 ============
+  // ============ UI：火箭介绍 ============
 
-  @Builder
-  timelineCard() {
-    Column() {
-      Row() {
-        this.cardTitle('发射周期')
-        Blank()
-        Text('T- 起飞前 / T+ 起飞后')
-          .fontSize(11)
-          .fontColor(TEXT_DIM)
-      }
-      .width('100%')
-      .alignItems(VerticalAlign.Center)
-
-      ForEach(this.tlRows, (row: LdTimelineRow, idx: number) => {
-        Row() {
-          // 时间标签定宽右对齐：左边参差不齐的话整列会像锯齿
-          Text(row.tag)
-            .fontSize(12)
-            .fontColor(ACCENT)
-            .width(84)
-            .textAlign(TextAlign.End)
-
-          Column() {
-            Text(row.name)
-              .fontSize(14)
-              .fontColor(TEXT_MAIN)
-              .width('100%')
-              .maxLines(1)
-              .textOverflow({ overflow: TextOverflow.Ellipsis })
-
-            if (row.desc.length > 0) {
-              Text(row.desc)
-                .fontSize(12)
-                .fontColor(TEXT_SUB)
-                .width('100%')
-                .maxLines(2)
-                .textOverflow({ overflow: TextOverflow.Ellipsis })
-                .margin({ top: 2 })
-            }
-          }
-          .layoutWeight(1)
-          .alignItems(HorizontalAlign.Start)
-          .margin({ left: 12 })
-        }
-        .width('100%')
-        .alignItems(VerticalAlign.Top)
-        .margin({ top: 10 })
-      }, (row: LdTimelineRow, idx: number) => String(idx) + row.tag + row.name)
-
-      // 只画前 12 条，剩下的用一行字数交代清楚，别让用户以为数据丢了
-      if (this.tlTotal > this.tlRows.length) {
-        Text('共 ' + String(this.tlTotal) + ' 条')
-          .fontSize(11)
-          .fontColor(TEXT_DIM)
-          .width('100%')
-          .margin({ top: 10 })
-      }
-    }
-    .width('100%')
-    .alignItems(HorizontalAlign.Start)
-    .padding(CARD_PAD)
-    .backgroundColor(CARD_BG)
-    .borderRadius(CARD_RADIUS)
-    .margin({ top: CARD_GAP })
-  }
-
-  // ============ UI：火箭 ============
-
+  /**
+   * 火箭卡（对位 launch-content.vue:131-186）。
+   *
+   * 相对上一版补齐了：90×90 缩略图、16vp w600 型号名、英文副标题、
+   * 现役/已退役胶囊、可复用/N 级胶囊、**六格参数**（起飞推力 / 长度 / 直径 /
+   * 级数 / LEO / GTO）、发射机构行（logo + 国旗 + 名称 + ›）。
+   * 可点区域收在标题行与缩略图这一块（整卡可点会和机构行打架，见文件头取舍 8）。
+   */
   @Builder
   rocketCard() {
     Column() {
       Row() {
-        this.cardTitle('运载火箭')
+        Text('火箭介绍')
+          .fontSize(15)
+          .fontWeight(600)
+          .fontColor(TEXT_MAIN)
         Blank()
-        // 卡片整体可点，这里只是给一个「可点」的视觉暗示
         Text('›')
-          .fontSize(16)
-          .fontColor(TEXT_DIM)
+          .fontSize(17)
+          .fontColor('#4A5568')
       }
       .width('100%')
       .alignItems(VerticalAlign.Center)
+      .onClick(() => {
+        this.goRocket();
+      })
 
       Row() {
         if (this.rocketImage().length > 0 && !this.rocketImgErr) {
           Image(this.rocketImage())
-            .width(48)
-            .height(48)
+            .width(90)
+            .height(90)
             .objectFit(ImageFit.Cover)
             .backgroundColor(MEDIA_BG)
-            .borderRadius(8)
+            .borderRadius(7)
             .onError(() => {
               this.rocketImgErr = true;
             })
         }
 
         Column() {
-          Text(this.rocketName())
-            .fontSize(14)
-            .fontWeight(FontWeight.Medium)
-            .fontColor(TEXT_MAIN)
-            .maxLines(2)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
-            .width('100%')
-
-          // 高度 · 直径 · LEO 运力 · 级数，缺哪段跳哪段
-          if (this.rocketParamText().length > 0) {
-            Text(this.rocketParamText())
-              .fontSize(14)
-              .fontColor(TEXT_DIM)
-              .maxLines(1)
+          Row() {
+            Text(this.rocketName())
+              .fontSize(16)
+              .fontWeight(600)
+              .fontColor(TEXT_MAIN)
+              .lineHeight(22)
+              .layoutWeight(1)
+              .maxLines(2)
               .textOverflow({ overflow: TextOverflow.Ellipsis })
-              .width('100%')
-              .margin({ top: 4 })
+
+            if (this.rocketActiveKnown()) {
+              Text(this.rocketActive() ? '现役' : '已退役')
+                .fontSize(10)
+                .fontColor(this.rocketActive() ? '#34C759' : '#7D8BA0')
+                .backgroundColor(this.rocketActive() ? '#2434C759' : '#0FFFFFFF')
+                .borderRadius(3)
+                .padding({ left: 6, right: 6, top: 1, bottom: 1 })
+                .margin({ left: 6 })
+            }
+          }
+          .width('100%')
+          .alignItems(VerticalAlign.Top)
+
+          // 英文副标题（中英不同才显示）
+          if (this.rocketSub().length > 0) {
+            Text(this.rocketSub())
+              .fontSize(11)
+              .fontColor(TEXT_DIM)
+              .maxLines(2)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+              .margin({ top: 2 })
+          }
+
+          // 可复用 / N 级
+          if (this.rocketFlags().length > 0) {
+            // chip 可能折行，用 Flex(wrap)；Row 没有 flexWrap
+            Flex({ wrap: FlexWrap.Wrap, alignItems: ItemAlign.Center }) {
+              ForEach(this.rocketFlags(), (flag: string) => {
+                Text(flag)
+                  .fontSize(10)
+                  .fontColor('#8B98AD')
+                  .backgroundColor('#12FFFFFF')
+                  .borderRadius(3)
+                  .padding({ left: 6, right: 6, top: 1, bottom: 1 })
+                  .margin({ right: 5, top: 5 })
+              }, (flag: string) => 'rf' + flag)
+            }
+            .width('100%')
+            .margin({ top: 2 })
           }
         }
         .layoutWeight(1)
@@ -1657,36 +2812,121 @@ export struct LaunchDetailView {
       .alignItems(VerticalAlign.Top)
       .margin({ top: 10 })
 
-      // desc 紧跟参数行（任务书要求「在参数行下面显示两行摘要」）
       if (this.rocketDesc().length > 0) {
         Text(this.rocketDesc())
-          .fontSize(12)
-          .fontColor(TEXT_SUB)
-          .lineHeight(18)
+          .fontSize(13)
+          .fontColor('#A9B6C8')
+          .lineHeight(22)
           .width('100%')
-          .maxLines(2)
+          .maxLines(4)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .margin({ top: 9 })
+      }
+
+      // 六格参数：两列三行
+      if (this.rocketSpecCells().length > 0) {
+        Column() {
+          ForEach(this.gridRows(this.rocketSpecCells()), (row: LdCellRow, idx: number) => {
+            Row() {
+              Column() {
+                Text(row.left.v)
+                  .fontSize(15)
+                  .fontWeight(600)
+                  .fontColor('#E2E8F0')
+                  .lineHeight(19)
+                  .maxLines(1)
+                  .textOverflow({ overflow: TextOverflow.Ellipsis })
+                  .width('100%')
+                Text(row.left.k)
+                  .fontSize(11)
+                  .fontColor(TEXT_DIM)
+                  .margin({ top: 1 })
+                  .width('100%')
+              }
+              .layoutWeight(1)
+              .alignItems(HorizontalAlign.Start)
+              .padding({ top: 6 })
+
+              if (row.hasRight) {
+                Column() {
+                  Text(row.right.v)
+                    .fontSize(15)
+                    .fontWeight(600)
+                    .fontColor('#E2E8F0')
+                    .lineHeight(19)
+                    .maxLines(1)
+                    .textOverflow({ overflow: TextOverflow.Ellipsis })
+                    .width('100%')
+                  Text(row.right.k)
+                    .fontSize(11)
+                    .fontColor(TEXT_DIM)
+                    .margin({ top: 1 })
+                    .width('100%')
+                }
+                .layoutWeight(1)
+                .alignItems(HorizontalAlign.Start)
+                .padding({ top: 6 })
+              } else {
+                // 奇数格：右侧补同权重的空位，否则左格会被拉成整行宽
+                Blank().layoutWeight(1)
+              }
+            }
+            .width('100%')
+            .alignItems(VerticalAlign.Top)
+          }, (row: LdCellRow, idx: number) => 'rs' + String(idx))
+        }
+        .width('100%')
+        .margin({ top: 8 })
+        .padding({ top: 5 })
+        .border({ width: { top: 0.5 }, color: '#0FFFFFFF' })
+      }
+
+      if (this.rocketMetaText().length > 0) {
+        Text(this.rocketMetaText())
+          .fontSize(11)
+          .fontColor('#7D8BA0')
+          .width('100%')
           .margin({ top: 8 })
       }
 
-      if (this.rocketFlags().length > 0) {
-        // chip 可能折行，用 Flex(wrap)；Row 没有 flexWrap
-        Flex({ wrap: FlexWrap.Wrap, alignItems: ItemAlign.Center }) {
-          ForEach(this.rocketFlags(), (flag: string) => {
-            this.chip(flag, false)
-          }, (flag: string) => flag)
+      // 发射机构：logo（异步补）+ 国旗 emoji + 中文名 + ›
+      if (this.hasAgency()) {
+        Row() {
+          if (this.agencyLogoOf().length > 0) {
+            Image(this.agencyLogoOf())
+              .width(20)
+              .height(20)
+              .objectFit(ImageFit.Contain)
+              .borderRadius(3)
+              .margin({ right: 7 })
+          }
+
+          if (this.agencyFlag().length > 0) {
+            Text(this.agencyFlag())
+              .fontSize(12)
+              .margin({ right: 5 })
+          }
+
+          Text(this.agencyName())
+            .fontSize(12.5)
+            .fontColor(TEXT_SUB)
+            .layoutWeight(1)
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+          Text('›')
+            .fontSize(15)
+            .fontColor('#4A5568')
+            .margin({ left: 6 })
         }
         .width('100%')
-        .margin({ top: 4 })
-      }
-
-      // 起飞质量 · 单次造价 · 首飞：和上面那行参数不重复，留着
-      if (this.rocketMeta().length > 0) {
-        Text(this.rocketMeta())
-          .fontSize(11)
-          .fontColor(TEXT_DIM)
-          .width('100%')
-          .margin({ top: 6 })
+        .alignItems(VerticalAlign.Center)
+        .padding({ top: 10 })
+        .margin({ top: 10 })
+        .border({ width: { top: 0.5 }, color: '#0FFFFFFF' })
+        .onClick(() => {
+          this.goAgency();
+        })
       }
     }
     .width('100%')
@@ -1695,66 +2935,174 @@ export struct LaunchDetailView {
     .backgroundColor(CARD_BG)
     .borderRadius(CARD_RADIUS)
     .margin({ top: CARD_GAP })
-    .onClick(() => {
-      this.goRocket();
-    })
   }
 
-  /** 两列参数格：值 14vp 粗体在上、标签 11vp 灰在下 */
+  /** 机构 logo 的私有读取（@Builder 里直接读 this，保证异步补到后会刷新） */
+  private agencyLogoOf(): string {
+    return this.agencyLogo;
+  }
+
+  // ============ UI：航天器 ============
+
+  /**
+   * 航天器卡（对位 launch-content.vue:188-229）。
+   *
+   * 整块是本轮新补的：数据来自 timelines 记录的 craft 字段，没有就整卡不显示。
+   * 排版直接复用火箭卡的 head + 六格，两张卡视觉保持一致。
+   */
   @Builder
-  cellGrid(cells: LdCell[]) {
+  craftCard() {
     Column() {
-      ForEach(this.toRows(cells), (row: LdCellRow, idx: number) => {
-        Row() {
-          Column() {
-            Text(row.left.v)
-              .fontSize(14)
-              .fontWeight(FontWeight.Bold)
+      this.cardTitle('航天器')
+
+      Row() {
+        if (this.craftImage().length > 0 && !this.craftImgErr) {
+          Image(this.craftImage())
+            .width(90)
+            .height(90)
+            .objectFit(ImageFit.Cover)
+            .backgroundColor(MEDIA_BG)
+            .borderRadius(7)
+            .onError(() => {
+              this.craftImgErr = true;
+            })
+            .onClick(() => {
+              Nav.pushPhoto(new PhotoNavParam(this.craftImage(), this.craftTitle()));
+            })
+        }
+
+        Column() {
+          Row() {
+            Text(this.craftTitle())
+              .fontSize(16)
+              .fontWeight(600)
               .fontColor(TEXT_MAIN)
-              .maxLines(1)
+              .lineHeight(22)
+              .layoutWeight(1)
+              .maxLines(2)
               .textOverflow({ overflow: TextOverflow.Ellipsis })
-              .width('100%')
-            Text(row.left.k)
+
+            if (this.craftStatusText().length > 0) {
+              Text(this.craftStatusText())
+                .fontSize(10)
+                .fontColor(this.craftLive() ? '#34C759' : '#7D8BA0')
+                .backgroundColor(this.craftLive() ? '#2434C759' : '#0FFFFFFF')
+                .borderRadius(3)
+                .padding({ left: 6, right: 6, top: 1, bottom: 1 })
+                .margin({ left: 6 })
+            }
+          }
+          .width('100%')
+          .alignItems(VerticalAlign.Top)
+
+          if (this.craftSub().length > 0) {
+            Text(this.craftSub())
               .fontSize(11)
               .fontColor(TEXT_DIM)
-              .maxLines(1)
+              .maxLines(2)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
               .margin({ top: 2 })
-              .width('100%')
           }
-          .layoutWeight(1)
-          .alignItems(HorizontalAlign.Start)
-          .padding({ top: 7, bottom: 7 })
 
-          if (row.hasRight) {
-            Column() {
-              Text(row.right.v)
-                .fontSize(14)
-                .fontWeight(FontWeight.Bold)
-                .fontColor(TEXT_MAIN)
-                .maxLines(1)
-                .textOverflow({ overflow: TextOverflow.Ellipsis })
-                .width('100%')
-              Text(row.right.k)
-                .fontSize(11)
-                .fontColor(TEXT_DIM)
-                .maxLines(1)
-                .margin({ top: 2 })
-                .width('100%')
+          if (this.craftDest().length > 0) {
+            Row() {
+              Text('目的地 · ' + this.craftDest())
+                .fontSize(10)
+                .fontColor('#8B98AD')
+                .backgroundColor('#12FFFFFF')
+                .borderRadius(3)
+                .padding({ left: 6, right: 6, top: 1, bottom: 1 })
             }
-            .layoutWeight(1)
-            .alignItems(HorizontalAlign.Start)
-            .padding({ top: 7, bottom: 7 })
-          } else {
-            // 奇数格：右侧补同权重的空位，否则左格会被拉成整行宽，
-            // 两列网格就变成「一行宽一行窄」的锯齿（RocketDetailView 同写法）
-            Blank().layoutWeight(1)
+            .margin({ top: 5 })
           }
         }
+        .layoutWeight(1)
+        .alignItems(HorizontalAlign.Start)
+        .margin({ left: this.craftImage().length > 0 && !this.craftImgErr ? 10 : 0 })
+      }
+      .width('100%')
+      .alignItems(VerticalAlign.Top)
+      .margin({ top: 10 })
+
+      if (this.craftDesc().length > 0) {
+        Text(this.craftDesc())
+          .fontSize(13)
+          .fontColor('#A9B6C8')
+          .lineHeight(22)
+          .width('100%')
+          .maxLines(4)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .margin({ top: 9 })
+      }
+
+      if (this.craftSpecCells().length > 0) {
+        Column() {
+          ForEach(this.gridRows(this.craftSpecCells()), (row: LdCellRow, idx: number) => {
+            Row() {
+              Column() {
+                Text(row.left.v)
+                  .fontSize(15)
+                  .fontWeight(600)
+                  .fontColor('#E2E8F0')
+                  .lineHeight(19)
+                  .maxLines(1)
+                  .width('100%')
+                Text(row.left.k)
+                  .fontSize(11)
+                  .fontColor(TEXT_DIM)
+                  .margin({ top: 1 })
+                  .width('100%')
+              }
+              .layoutWeight(1)
+              .alignItems(HorizontalAlign.Start)
+              .padding({ top: 6 })
+
+              if (row.hasRight) {
+                Column() {
+                  Text(row.right.v)
+                    .fontSize(15)
+                    .fontWeight(600)
+                    .fontColor('#E2E8F0')
+                    .lineHeight(19)
+                    .maxLines(1)
+                    .width('100%')
+                  Text(row.right.k)
+                    .fontSize(11)
+                    .fontColor(TEXT_DIM)
+                    .margin({ top: 1 })
+                    .width('100%')
+                }
+                .layoutWeight(1)
+                .alignItems(HorizontalAlign.Start)
+                .padding({ top: 6 })
+              } else {
+                Blank().layoutWeight(1)
+              }
+            }
+            .width('100%')
+            .alignItems(VerticalAlign.Top)
+          }, (row: LdCellRow, idx: number) => 'cs' + String(idx))
+        }
         .width('100%')
-        .alignItems(VerticalAlign.Top)
-      }, (row: LdCellRow, idx: number) => String(idx))
+        .margin({ top: 8 })
+        .padding({ top: 5 })
+        .border({ width: { top: 0.5 }, color: '#0FFFFFFF' })
+      }
+
+      if (this.craftMetaText().length > 0) {
+        Text(this.craftMetaText())
+          .fontSize(11)
+          .fontColor('#7D8BA0')
+          .width('100%')
+          .margin({ top: 8 })
+      }
     }
     .width('100%')
+    .alignItems(HorizontalAlign.Start)
+    .padding(CARD_PAD)
+    .backgroundColor(CARD_BG)
+    .borderRadius(CARD_RADIUS)
+    .margin({ top: CARD_GAP })
   }
 
   // ============ UI：发射条件 / 失败原因 ============
@@ -1767,25 +3115,27 @@ export struct LaunchDetailView {
       if (this.probabilityText().length > 0) {
         Row() {
           Text('预报概率')
-            .fontSize(12.5)
-            .fontColor(TEXT_SUB)
-            .width(72)
+            .fontSize(14)
+            .fontColor(TEXT_DIM)
+            .width(85)
           Text(this.probabilityText())
-            .fontSize(15)
-            .fontWeight(FontWeight.Bold)
-            .fontColor(ACCENT)
+            .fontSize(14)
+            .fontColor('#E2E8F0')
+            .textAlign(TextAlign.End)
             .layoutWeight(1)
         }
         .width('100%')
-        .margin({ top: 10 })
         .alignItems(VerticalAlign.Center)
+        .padding({ top: 7, bottom: 7 })
+        .border({ width: { top: 0.5 }, color: '#0AFFFFFF' })
+        .margin({ top: 6 })
       }
 
       if (this.weatherText().length > 0) {
         Text(this.weatherText())
-          .fontSize(13)
+          .fontSize(14.5)
           .fontColor(TEXT_SUB)
-          .lineHeight(20)
+          .lineHeight(25)
           .width('100%')
           .margin({ top: 8 })
       }
@@ -1803,9 +3153,9 @@ export struct LaunchDetailView {
     Column() {
       this.cardTitle('失败原因')
       Text(this.failText())
-        .fontSize(13)
+        .fontSize(14.5)
         .fontColor(TEXT_SUB)
-        .lineHeight(20)
+        .lineHeight(25)
         .width('100%')
         .margin({ top: 8 })
     }
@@ -1819,6 +3169,13 @@ export struct LaunchDetailView {
 
   // ============ UI：发射场地 ============
 
+  /**
+   * 发射场地（对位 launch-content.vue:248-274）。
+   *
+   * 卫星图改成**原比例**（小程序 mode="widthFix"）：原来固定 150vp Cover 会把
+   * 一张扁长的场区图裁得只剩中间一条。半径 6、底 #0f1621。
+   * 另外补上「该工位累计 / N 次发射」一行，经纬度改成 label 85 + 值右对齐。
+   */
   @Builder
   padCard() {
     Column() {
@@ -1827,64 +3184,86 @@ export struct LaunchDetailView {
       if (this.padMap().length > 0 && !this.mapErr) {
         Image(this.padMap())
           .width('100%')
-          .height(150)
-          .objectFit(ImageFit.Cover)
-          .backgroundColor(MEDIA_BG)
-          .borderRadius(8)
+          .objectFit(ImageFit.Contain)
+          .backgroundColor('#0F1621')
+          .borderRadius(6)
           .margin({ top: 10 })
           .onError(() => {
             this.mapErr = true;
           })
+          .onClick(() => {
+            Nav.pushPhoto(new PhotoNavParam(this.padMap(), this.padName()));
+          })
       }
 
-      // 工位名可点：LL2 的 pad 对象没带 id，只能拿名字去 pads 数据集里反查，
-      // 所以入参的 id 传空串、由 PadView 自己按 name 匹配。
-      // 但 name 不够：pads.json 里叫 "Unknown Pad" 的有好几条（不同发射场各一条），
-      // 所以把 pad.location.name 一并传下去做二次消歧，否则点 Mahia 会跳到 Sea Launch。
       Row() {
-        Text(this.padName())
-          .fontSize(15)
-          .fontWeight(FontWeight.Medium)
-          .fontColor(TEXT_MAIN)
-          .layoutWeight(1)
+        Column() {
+          Text(this.padName())
+            .fontSize(15)
+            .fontWeight(500)
+            .fontColor(TEXT_MAIN)
+            .maxLines(2)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+          if (this.padPlace().length > 0) {
+            Text(this.padPlace())
+              .fontSize(12)
+              .fontColor(TEXT_SUB)
+              .margin({ top: 2 })
+          }
+        }
+        .layoutWeight(1)
+        .alignItems(HorizontalAlign.Start)
+
         if (this.padName().length > 0) {
           Text('›')
-            .fontSize(15)
+            .fontSize(17)
             .fontColor(ACCENT)
+            .margin({ left: 8 })
         }
       }
       .width('100%')
-      .margin({ top: 10 })
       .alignItems(VerticalAlign.Center)
+      .margin({ top: 10 })
       .onClick(() => {
-        if (this.padName().length === 0) {
-          return;
-        }
-        Nav.pushPad(new PadNavParam('', this.padName(), this.padPlace()));
+        this.goPad();
       })
 
-      if (this.padPlace().length > 0) {
-        Text(this.padPlace())
-          .fontSize(12)
-          .fontColor(TEXT_SUB)
-          .width('100%')
-          .margin({ top: 3 })
+      if (this.padLaunchCount() > 0) {
+        Row() {
+          Text('该工位累计')
+            .fontSize(14)
+            .fontColor(TEXT_DIM)
+            .width(85)
+          Text(String(Math.round(this.padLaunchCount())) + ' 次发射')
+            .fontSize(14)
+            .fontColor('#E2E8F0')
+            .textAlign(TextAlign.End)
+            .layoutWeight(1)
+        }
+        .width('100%')
+        .alignItems(VerticalAlign.Center)
+        .padding({ top: 7, bottom: 7 })
+        .border({ width: { top: 0.5 }, color: '#0AFFFFFF' })
+        .margin({ top: 6 })
       }
 
       if (this.padCoord().length > 0) {
         Row() {
           Text('经纬度')
-            .fontSize(11)
+            .fontSize(14)
             .fontColor(TEXT_DIM)
-            .width(56)
+            .width(85)
           Text(this.padCoord())
-            .fontSize(12)
-            .fontColor(TEXT_SUB)
+            .fontSize(14)
+            .fontColor('#E2E8F0')
+            .textAlign(TextAlign.End)
             .layoutWeight(1)
         }
         .width('100%')
-        .margin({ top: 10 })
-        .alignItems(VerticalAlign.Top)
+        .alignItems(VerticalAlign.Center)
+        .padding({ top: 7, bottom: 7 })
+        .border({ width: { top: 0.5 }, color: '#0AFFFFFF' })
       }
     }
     .width('100%')
@@ -1897,52 +3276,55 @@ export struct LaunchDetailView {
 
   // ============ UI：统计概览 ============
 
+  /** 统计概览：值 20vp w600 + 标签 11vp，**每格居中**（小程序 .stat-cell align-items:center） */
   @Builder
   statCard() {
     Column() {
       this.cardTitle('统计概览')
 
       Column() {
-        ForEach(this.toRows(this.countCells()), (row: LdCellRow, idx: number) => {
+        ForEach(this.gridRows(this.countCells()), (row: LdCellRow, idx: number) => {
           Row() {
             Column() {
               Text(row.left.v)
-                .fontSize(17)
-                .fontWeight(FontWeight.Bold)
-                .fontColor(TEXT_MAIN)
+                .fontSize(20)
+                .fontWeight(600)
+                .fontColor('#E2E8F0')
+                .lineHeight(24)
                 .maxLines(1)
               Text(row.left.k)
                 .fontSize(11)
                 .fontColor(TEXT_DIM)
-                .margin({ top: 2 })
+                .margin({ top: 3 })
             }
             .layoutWeight(1)
-            .alignItems(HorizontalAlign.Start)
-            .padding({ top: 6, bottom: 6 })
+            .alignItems(HorizontalAlign.Center)
+            .padding({ top: 9, bottom: 9 })
 
             if (row.hasRight) {
               Column() {
                 Text(row.right.v)
-                  .fontSize(17)
-                  .fontWeight(FontWeight.Bold)
-                  .fontColor(TEXT_MAIN)
+                  .fontSize(20)
+                  .fontWeight(600)
+                  .fontColor('#E2E8F0')
+                  .lineHeight(24)
                   .maxLines(1)
                 Text(row.right.k)
                   .fontSize(11)
                   .fontColor(TEXT_DIM)
-                  .margin({ top: 2 })
+                  .margin({ top: 3 })
               }
               .layoutWeight(1)
-              .alignItems(HorizontalAlign.Start)
-              .padding({ top: 6, bottom: 6 })
+              .alignItems(HorizontalAlign.Center)
+              .padding({ top: 9, bottom: 9 })
             } else {
-              // 同参数格：奇数格右侧补空位，避免左格被拉成整行宽（三格时会很明显）
+              // 奇数格：右侧补空位，避免左格被拉成整行宽（三格时会很明显）
               Blank().layoutWeight(1)
             }
           }
           .width('100%')
           .alignItems(VerticalAlign.Top)
-        }, (row: LdCellRow, idx: number) => String(idx))
+        }, (row: LdCellRow, idx: number) => 'st' + String(idx))
       }
       .width('100%')
       .margin({ top: 6 })
@@ -1957,13 +3339,19 @@ export struct LaunchDetailView {
 
   // ============ UI：相关报道 ============
 
+  /**
+   * 相关报道（对位 launch-content.vue:290-308）。
+   *
+   * 行可点 → Nav.pushArticle（见 openArticle 的注释）；
+   * 标题 14vp #dfe7f0 lh1.5（原来是 13vp 纯白），右侧一个 › 提示可点。
+   */
   @Builder
   newsCard() {
     Column() {
       Row() {
         this.cardTitle('相关报道')
         Blank()
-        Text(this.news.length + ' 篇')
+        Text(String(this.news.length) + ' 篇')
           .fontSize(11)
           .fontColor(TEXT_DIM)
       }
@@ -1971,24 +3359,37 @@ export struct LaunchDetailView {
       .alignItems(VerticalAlign.Center)
 
       ForEach(this.news, (n: NewsItem, idx: number) => {
-        Column() {
-          Text(ldNewsTitle(n))
-            .fontSize(13)
-            .fontColor(TEXT_MAIN)
-            .maxLines(2)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
-            .width('100%')
-          Text(ldNewsMeta(n))
-            .fontSize(11)
-            .fontColor(TEXT_DIM)
-            .maxLines(1)
-            .margin({ top: 3 })
-            .width('100%')
+        Row() {
+          Column() {
+            Text(ldNewsTitle(n))
+              .fontSize(14)
+              .fontColor('#DFE7F0')
+              .lineHeight(21)
+              .maxLines(2)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+              .width('100%')
+            Text(ldNewsMeta(n))
+              .fontSize(11)
+              .fontColor(TEXT_DIM)
+              .maxLines(1)
+              .margin({ top: 4 })
+              .width('100%')
+          }
+          .layoutWeight(1)
+          .alignItems(HorizontalAlign.Start)
+
+          Text('›')
+            .fontSize(17)
+            .fontColor('#4A5568')
+            .margin({ left: 8 })
         }
         .width('100%')
-        .alignItems(HorizontalAlign.Start)
-        .padding({ top: 9, bottom: 9 })
-      }, (n: NewsItem) => String(n.id))
+        .alignItems(VerticalAlign.Center)
+        .padding({ top: 7, bottom: 7 })
+        .onClick(() => {
+          this.openArticle(n);
+        })
+      }, (n: NewsItem) => 'news' + String(n.id))
     }
     .width('100%')
     .alignItems(HorizontalAlign.Start)
@@ -1998,8 +3399,23 @@ export struct LaunchDetailView {
     .margin({ top: CARD_GAP })
   }
 
+  /** 页脚数据来源（launch-detail.vue 的 .footer-hint） */
+  @Builder
+  footerHint() {
+    Text('数据来源 The Space Devs · 中文翻译由同步任务生成')
+      .fontSize(11)
+      .fontColor(TEXT_FAINT)
+      .width('100%')
+      .textAlign(TextAlign.Center)
+      .margin({ top: 20 })
+  }
+
   // ============ UI：加载中 / 未找到 ============
 
+  /**
+   * 加载态：文案是 `加载中...`（英文三点，对位 launch-detail.vue 的 .loading-text），
+   * 15vp #6b7891、整块上下 120vp（240rpx）留白。
+   */
   @Builder
   loadingBlock() {
     Column() {
@@ -2007,54 +3423,53 @@ export struct LaunchDetailView {
         .width(36)
         .height(36)
         .color(ACCENT)
-      Text('正在加载发射详情…')
-        .fontSize(12)
+      Text('加载中...')
+        .fontSize(15)
         .fontColor(TEXT_DIM)
-        .margin({ top: 10 })
+        .margin({ top: 12 })
     }
     .width('100%')
     .layoutWeight(1)
     .justifyContent(FlexAlign.Center)
     .alignItems(HorizontalAlign.Center)
+    .padding({ left: 30, right: 30, top: 120 })
   }
 
+  /**
+   * 空态：🛰️ 40vp + `未找到该发射任务` 15vp + 返回胶囊。
+   * 胶囊 padding 10/30、radius 30、底 rgba(56,189,248,.15)、描边 rgba(56,189,248,.4)。
+   * 小程序的空态只有一个「返回」，没有「重试」——这里对齐。
+   */
   @Builder
   notFoundBlock() {
     Column() {
+      Text('🛰️')
+        .fontSize(40)
+        .margin({ bottom: 15 })
+
       Text('未找到该发射任务')
         .fontSize(15)
-        .fontWeight(FontWeight.Medium)
-        .fontColor(TEXT_MAIN)
-
-      Text(this.idText().length > 0 ? this.idText() : '（未提供发射 id）')
-        .fontSize(11)
         .fontColor(TEXT_DIM)
-        .maxLines(2)
-        .textAlign(TextAlign.Center)
-        .margin({ top: 8 })
+
+      if (this.idText().length > 0) {
+        Text(this.idText())
+          .fontSize(11)
+          .fontColor(TEXT_FAINT)
+          .maxLines(2)
+          .textAlign(TextAlign.Center)
+          .margin({ top: 8 })
+      }
 
       Row() {
-        Text('重试')
-          .fontSize(12.5)
+        Text('返回')
+          .fontSize(15)
           .fontColor(ACCENT)
       }
-      .padding({ left: 18, right: 18, top: 7, bottom: 7 })
-      .borderRadius(16)
-      .backgroundColor(CHIP_BG)
-      .margin({ top: 16 })
-      .onClick(() => {
-        this.retry();
-      })
-
-      Row() {
-        Text('‹ 返回')
-          .fontSize(12.5)
-          .fontColor(TEXT_SUB)
-      }
-      .padding({ left: 16, right: 16, top: 7, bottom: 7 })
-      .borderRadius(16)
-      .backgroundColor(CARD_BG)
-      .margin({ top: 12 })
+      .padding({ left: 30, right: 30, top: 10, bottom: 10 })
+      .borderRadius(30)
+      .backgroundColor('#2638BDF8')
+      .border({ width: 1, color: '#6638BDF8' })
+      .margin({ top: 25 })
       .onClick(() => {
         Nav.pop();
       })
@@ -2063,74 +3478,217 @@ export struct LaunchDetailView {
     .layoutWeight(1)
     .justifyContent(FlexAlign.Center)
     .alignItems(HorizontalAlign.Center)
-    .padding({ left: 24, right: 24 })
+    .padding({ left: 30, right: 30, top: 120 })
+  }
+
+  // ============ UI：全屏看图器（launch-photo.vue 的对位实现） ============
+
+  /**
+   * 全屏看图器。
+   *
+   * 对位小程序 components/launch-detail/launch-photo.vue：
+   *   · 底色 #04060a，铺满整屏，压在页面之上；
+   *   · 图片层用 Swiper 实现**左滑切换**（小程序是手写 touch 手势 + translateX，
+   *     ArkUI 的 Swiper 就是同一件事的官方实现，且在首尾会自动停住，
+   *     不需要再写 0.28 阻尼那套）；
+   *   · 底部一条渐隐栏：左标题 + 副行（型号 · 时间 · @credit），
+   *     右侧「cur+1 / N」计数 + 「查看发射详情 ›」胶囊；
+   *   · 图片一律 2000px 原图（fullImageOf 推导，推导失败退回缩略图）。
+   *
+   * 有意差异：小程序的「查看发射详情」是切到本条发射的详情视图；
+   * 本页本身就是详情页，所以这个按钮的语义变成「收起看图器，回到详情」。
+   */
+  @Builder
+  photoViewer() {
+    Stack({ alignContent: Alignment.Bottom }) {
+      Swiper() {
+        ForEach(this.photos, (p: LdPhoto, i: number) => {
+          Image(p.full)
+            .width('100%')
+            .height('100%')
+            .objectFit(ImageFit.Contain)
+        }, (p: LdPhoto, i: number) => 'view' + p.full + String(i))
+      }
+      .width('100%')
+      .height('100%')
+      .index(this.viewerIdx)
+      .loop(false)
+      .indicator(false)
+      .duration(260)
+      .onChange((idx: number) => {
+        this.viewerIdx = idx;
+      })
+
+      // 底部信息栏
+      Column() {
+        Row() {
+          Column() {
+            Text(this.viewerTitle())
+              .fontSize(16)
+              .fontWeight(600)
+              .fontColor('#EEF3FA')
+              .lineHeight(22)
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+              .width('100%')
+
+            if (this.viewerMeta().length > 0) {
+              Text(this.viewerMeta())
+                .fontSize(11.5)
+                .fontColor('#B8D6E2F0')
+                .maxLines(1)
+                .textOverflow({ overflow: TextOverflow.Ellipsis })
+                .width('100%')
+                .margin({ top: 4 })
+            }
+          }
+          .layoutWeight(1)
+          .alignItems(HorizontalAlign.Start)
+
+          Column() {
+            if (this.photos.length > 1) {
+              Text(String(this.viewerIdx + 1) + ' / ' + String(this.photos.length))
+                .fontSize(10.5)
+                .fontColor('#9EFFFFFF')
+                .margin({ bottom: 6 })
+            }
+
+            Row() {
+              Text('查看发射详情')
+                .fontSize(12.5)
+                .fontWeight(600)
+                .fontColor('#7DD3FC')
+              Text('›')
+                .fontSize(15)
+                .fontColor('#7DD3FC')
+                .margin({ left: 2 })
+            }
+            .padding({ left: 15, right: 15, top: 7, bottom: 7 })
+            .borderRadius(999)
+            .backgroundColor('#2938BDF8')
+            .border({ width: 1, color: '#7338BDF8' })
+            .onClick(() => {
+              this.viewerOn = false;
+            })
+          }
+          .alignItems(HorizontalAlign.End)
+          .margin({ left: 12 })
+        }
+        .width('100%')
+        .alignItems(VerticalAlign.Bottom)
+      }
+      .width('100%')
+      .padding({ left: 22, right: 22, top: 20, bottom: 28 })
+      .linearGradient({
+        angle: 180,
+        colors: [
+          ['#0004060A', 0.0],
+          ['#D104060A', 1.0]
+        ]
+      })
+    }
+    .width('100%')
+    .height('100%')
+    .backgroundColor(OVERLAY_BG)
   }
 
   // ============ build ============
 
+  /**
+   * 整页结构：Stack[内容层, 固定顶栏, 看图器]。
+   *
+   * 顶栏与看图器必须是 Stack 的兄弟层：顶栏要 fixed 压在首图上（不占文档流，
+   * 否则首图会被顶下去 44vp，沉浸感没了）；看图器要盖住包括顶栏在内的一切。
+   */
   build() {
-    Column() {
-      this.topBar()
-
-      if (this.loading && !this.found) {
-        this.loadingBlock()
-      } else if (!this.found) {
-        this.notFoundBlock()
-      } else {
-        Scroll(this.scroller) {
-          Column() {
-            // Hero 通栏；卡片内容才留左右内边距
-            this.hero()
-
+    Stack({ alignContent: Alignment.TopStart }) {
+      // ---- 内容层 ----
+      Column() {
+        if (this.loading && !this.found) {
+          this.loadingBlock()
+        } else if (!this.found) {
+          this.notFoundBlock()
+        } else {
+          Scroll(this.scroller) {
             Column() {
-              if (this.isUpcoming()) {
-                this.countdownCard()
+              this.heroBlock()
+
+              Column() {
+                this.headBlock()
+
+                if (this.isUpcoming()) {
+                  this.countdownCard()
+                }
+                // 发射周期紧跟倒计时：发射前它是这页最有用的一块
+                if (this.tlRows.length > 0) {
+                  this.timelineCard()
+                }
+                this.whenCard()
+                if (this.hasWindow()) {
+                  this.winCard()
+                }
+                if (this.hasMission()) {
+                  this.missionCard()
+                }
+                // 任务信息图是竖版长图，放在任务详情之后，当「长文配图」看
+                if (this.hasInfo()) {
+                  this.infoCard()
+                }
+                // 只要拿得到火箭名就画卡（rocketBrief 缺失时还有 rocket.configuration 兜底）
+                if (this.rocketName().length > 0) {
+                  this.rocketCard()
+                }
+                if (this.craftTitle().length > 0) {
+                  this.craftCard()
+                }
+                if (this.hasCondition()) {
+                  this.conditionCard()
+                }
+                if (this.failText().length > 0) {
+                  this.failCard()
+                }
+                if (this.padName().length > 0) {
+                  this.padCard()
+                }
+                if (this.countCells().length > 0) {
+                  this.statCard()
+                }
+                if (this.news.length > 0) {
+                  this.newsCard()
+                }
+                this.footerHint()
               }
-              // 发射周期紧跟倒计时：发射前它是这页最有用的一块（下一步做什么、还有多久）
-              if (this.tlRows.length > 0) {
-                this.timelineCard()
-              }
-              this.whenCard()
-              if (this.hasMission()) {
-                this.missionCard()
-              }
-              // 任务信息图是竖版长图，放在任务详情之后，当「长文配图」看
-              if (this.hasInfo()) {
-                this.infoCard()
-              }
-              // 只要拿得到火箭名就画卡（rocketBrief 缺失时还有 rocket.configuration 兜底）
-              if (this.rocketName().length > 0) {
-                this.rocketCard()
-              }
-              if (this.hasCondition()) {
-                this.conditionCard()
-              }
-              if (this.failText().length > 0) {
-                this.failCard()
-              }
-              if (this.padName().length > 0) {
-                this.padCard()
-              }
-              if (this.countCells().length > 0) {
-                this.statCard()
-              }
-              if (this.news.length > 0) {
-                this.newsCard()
-              }
+              .width('100%')
+              .alignItems(HorizontalAlign.Start)
+              .padding({ left: PAGE_PAD, right: PAGE_PAD })
+              // 正文上提 20vp，压住首图底部的渐隐带（.body margin-top -40rpx）
+              .margin({ top: BODY_LIFT })
             }
             .width('100%')
-            .alignItems(HorizontalAlign.Start)
-            .padding({ left: PAGE_PAD, right: PAGE_PAD })
+            .padding({ bottom: BOTTOM_PAD })
           }
           .width('100%')
-          // 详情页不在 tab 内，底部留 32 即可（不用 92 的胶囊让位）
-          .padding({ bottom: BOTTOM_PAD })
+          .layoutWeight(1)
+          .align(Alignment.Top)
+          .scrollBar(BarState.Off)
+          .edgeEffect(EdgeEffect.Spring)
+          // 滚动驱动顶栏变实色。这里读 scroller 的绝对偏移，不用回调参数
+          // （Scroll 的回调在「2 参 xOffset/yOffset」与「3 参 + scrollState」两套签名之间有过变动，
+          //   零参 lambda 对两者都可赋值，彻底绕开版本差异）
+          .onDidScroll(() => {
+            this.syncNavSolid();
+          })
         }
-        .width('100%')
-        .layoutWeight(1)
-        .align(Alignment.Top)
-        .scrollBar(BarState.Off)
-        .edgeEffect(EdgeEffect.Spring)
+      }
+      .width('100%')
+      .height('100%')
+
+      // ---- 固定顶栏（压在首图上，不占文档流） ----
+      this.navBar()
+
+      // ---- 全屏看图器（最后画 = 最上层） ----
+      if (this.viewerOn) {
+        this.photoViewer()
       }
     }
     .width('100%')
