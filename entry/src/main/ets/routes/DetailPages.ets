@@ -121,7 +121,14 @@ export function LaunchDetailPage(name: string, param: LaunchNavParam) {
 @Builder
 export function PhotoDetailPage(name: string, param: PhotoNavParam) {
   NavDestination() {
-    PhotoDetailView({ url: param.url, title: param.title })
+    PhotoDetailView({
+      url: param.url,
+      title: param.title,
+      date: param.date,
+      credit: param.credit,
+      tag: param.tag,
+      intro: param.intro
+    })
   }
   .hideTitleBar(true)
   .backgroundColor('#000000')

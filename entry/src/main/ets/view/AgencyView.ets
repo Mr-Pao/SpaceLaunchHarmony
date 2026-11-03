@@ -29,8 +29,10 @@
  * ── 与小程序的三处有意差异 ──
  *   1. Hero 图**先实拍图再 logo**（小程序是先 logo）。200vp 通栏用实拍图信息量
  *      更大，logo 只在没有实拍图时顶上 —— 任务书口径，且与 RocketDetailView 一致。
- *   2. 不做「该机构的火箭」那一块：小程序是拿机构名去 launchers 数据集反查，
- *      跨数据集硬套会丢型号类型；任务书明确改为展示 agencies 自带的 launchers 串。
+ *   2. 「该机构的火箭」卡片：早期版本不做这一块（只展示 agencies 自带的 launchers 串），
+ *      现按任务书补齐，过滤/排序/去重口径与小程序 computed 逐条对拍（见 rebuildRockets）。
+ *      唯一差异是跳转入参：小程序 goRocket(r.id) 传数字 id，鸿蒙 RocketNavParam 只有 name，
+ *      故改传 launchers 的英文 name（详情页正是按 name 定位型号的，见 RocketDetailView）。
  *   3. 标题不截断：agencyLabel() 截 16 字是给列表用的，详情页标题用原名 + 省略号。
  *
  * ⚠ 本文件不使用 console.*，日志一律 hilog。不使用 AppStorage。

@@ -75,6 +75,7 @@ import {
 } from '../components/GalleryGrid';
 import { Nav } from '../routes/Nav';
 import { LaunchNavParam, PhotoNavParam } from '../routes/NavParam';
+import { LaunchSummary } from '../model/Common';
 
 const DOMAIN: number = 0x0000;
 const TAG: string = 'GalleryView';
@@ -289,6 +290,11 @@ export struct GalleryView {
       const guessed: string = fullImageOf(thumb);
       const full: string = given.length > 0 ? given : (guessed.length > 0 ? guessed : thumb);
       out.push(new MpImage(key, thumb, full, this.titleOf(item.name), 'launch', strOf(item.net)));
+      // gallery 数据集只带 id/name/net/thumb/credit/cname，没有 date/intro，
+      // 日期由看图器从 net 前 10 位兜底（在 openItem 里处理）
+      const g: MpImage = out[out.length - 1];
+      g.credit = strOf(item.credit);
+      g.tag = '图库精选';
     }
     this.launchPool = out;
     this.cntLaunch = data.count !== undefined && data.count > 0 ? data.count : out.length;
@@ -310,6 +316,12 @@ export struct GalleryView {
       // 标题写死：EPIC 是同一颗卫星拍同一颗星球，没有逐张标题（小程序同样写死）
       out.push(new MpImage(key, cover, given.length > 0 ? given : cover,
         '地球 · DSCOVR', 'photo', ''));
+      const ep: MpImage = out[out.length - 1];
+      ep.date = strOf(item.date).slice(0, 10);
+      ep.tag = '每日地球';
+      ep.credit = 'NASA EPIC';
+      const capZh: string = strOf(item.captionZh);
+      ep.intro = capZh.length > 0 ? capZh : strOf(item.caption);
     }
     this.earthPool = out;
     this.cntEarth = data.count !== undefined && data.count > 0 ? data.count : out.length;
@@ -331,6 +343,12 @@ export struct GalleryView {
       const title: string = zh.length > 0 ? zh : strOf(item.title);
       const key: string = 'apod-' + strOf(item.date) + '-' + String(i);
       out.push(new MpImage(key, cover, given.length > 0 ? given : cover, title, 'photo', ''));
+      const ap: MpImage = out[out.length - 1];
+      ap.date = strOf(item.date).slice(0, 10);
+      ap.tag = '每日天文';
+      ap.credit = strOf(item.credit);
+      const expZh: string = strOf(item.explanationZh);
+      ap.intro = expZh.length > 0 ? expZh : strOf(item.explanation);
     }
     this.astroPool = out;
     this.cntAstro = data.count !== undefined && data.count > 0 ? data.count : out.length;
@@ -354,6 +372,13 @@ export struct GalleryView {
       const id: string = strOf(item.id);
       const key: string = 'nasa-' + (id.length > 0 ? id : String(i));
       out.push(new MpImage(key, cover, given.length > 0 ? given : cover, title, 'photo', ''));
+      const ns: MpImage = out[out.length - 1];
+      ns.date = strOf(item.date).slice(0, 10);
+      const th: string = strOf(item.themeName);
+      ns.tag = th.length > 0 ? th : 'NASA 影像';
+      ns.credit = strOf(item.center);
+      const dsZh: string = strOf(item.descZh);
+      ns.intro = dsZh.length > 0 ? dsZh : strOf(item.desc);
     }
     this.nasaPool = out;
     this.cntNasa = data.count !== undefined && data.count > 0 ? data.count : out.length;
@@ -459,14 +484,30 @@ export struct GalleryView {
    */
   private openItem(item: MpImage): void {
     if (item.kind === 'launch' && item.id.length > 0) {
-      Nav.pushLaunch(new LaunchNavParam(item.id, item.net, item.title));
-      return;
+      // 只有这条发射**在缓存里真的查得到**才进发射详情。
+      // 图库是历史全量（上千张、跨好几年），而 LaunchDetailView 只在
+      // upcoming / previous 各 100 条里按 id 查，图库里的老发射必然查不到 ——
+      // 直接 pushLaunch 会稳定落到「未找到该发射任务」这个死路。
+      // 查不到就退到看图器：图库这一页的本分是看图，不该给一个空页面。
+      const hit: LaunchSummary | null = repo.findById<LaunchSummary>('upcoming', item.id);
+      const hit2: LaunchSummary | null = hit !== null ? hit : repo.findById<LaunchSummary>('previous', item.id);
+      if (hit2 !== null) {
+        Nav.pushLaunch(new LaunchNavParam(item.id, item.net, item.title));
+        return;
+      }
     }
     const url: string = item.full.length > 0 ? item.full : item.thumb;
     if (url.length === 0) {
       return;
     }
-    Nav.pushPhoto(new PhotoNavParam(url, item.title));
+    // 四个附加字段直接搬给看图器：它靠这些渲染「分类 · 日期 · @署名」副标题
+    // 和 30vh 可滚动中文介绍。发射图没有 date，用 net 前 10 位兜底（net 是 ISO 时间）。
+    const p: PhotoNavParam = new PhotoNavParam(url, item.title);
+    p.tag = item.tag;
+    p.credit = item.credit;
+    p.intro = item.intro;
+    p.date = item.date.length > 0 ? item.date : item.net.slice(0, 10);
+    Nav.pushPhoto(p);
   }
 
   // ============ 「看全部」清单模式 ============

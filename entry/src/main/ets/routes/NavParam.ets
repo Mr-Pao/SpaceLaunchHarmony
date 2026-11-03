@@ -39,6 +39,23 @@ export class PhotoNavParam {
   url: string = '';
   /** 标题（发射名 / APOD 标题 / 宇航员名，视来源而定） */
   title: string = '';
+  /**
+   * 以下四个字段对位小程序 photo-detail 的 `_photo_detail` Storage 载荷
+   * （`pages/gallery/gallery.vue:407` 写入 `{full, title, date, intro, credit, tag}`）。
+   *
+   * 为什么不放进 constructor：现有 10 个 pushPhoto 调用点里只有图库那一路有这些值，
+   * 再加 4 个同类型 string 会让调用点变成一长串参数、顺序写错编译器也不报。
+   * 所以保持两参构造，需要的调用点 new 完再逐字段赋值
+   * （与 ArticleNavParam 同一取舍，见本文件头说明）。
+   */
+  /** 日期（YYYY-MM-DD，来自 apod / epic / nasaImages 的 date） */
+  date: string = '';
+  /** 版权署名（不含 @ 前缀，渲染时页面自己补） */
+  credit: string = '';
+  /** 分类标签（每日天文 / 每日地球 / 每日一图 …），兼作顶栏兜底标题 */
+  tag: string = '';
+  /** 中文介绍正文（apod 的 explanationZh、epic 的 captionZh，可能上千字） */
+  intro: string = '';
 
   constructor(url: string, title: string) {
     this.url = url;

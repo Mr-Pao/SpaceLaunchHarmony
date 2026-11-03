@@ -93,6 +93,20 @@ export class MpImage {
   kind: string = '';
   /** 发射时刻 ISO，只有 kind='launch' 有值；发射详情用它兜底反查 */
   net: string = '';
+  /**
+   * 以下四个字段喂给看图器（对位小程序 `pages/gallery/gallery.vue:407`
+   * 写进 `_photo_detail` 的 `{date, intro, credit, tag}`）。
+   * 之前只有 (id, thumb, full, title, kind, net) 六个，看图器拿不到正文，
+   * 「30vh 可滚动中文介绍」和「分类 · 日期 · @署名」副标题都做不出来。
+   */
+  /** 日期 YYYY-MM-DD（apod / epic / nasa 有；发射图没有，看 net） */
+  date: string = '';
+  /** 版权署名（不含 @） */
+  credit: string = '';
+  /** 分类标签，兼作看图器顶栏标题兜底 */
+  tag: string = '';
+  /** 中文介绍正文（apod 的 explanationZh / epic 的 captionZh / nasa 的 descZh） */
+  intro: string = '';
 
   constructor(id: string, thumb: string, full: string, title: string, kind: string, net: string) {
     this.id = id;

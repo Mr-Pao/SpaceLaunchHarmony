@@ -25,7 +25,13 @@
  *     的下标访问更挑剔；match 只用来做「是否匹配」的判定）。
  *
  * 纯函数：无 IO、无网络、无存储、无日志。
+ *
+ * 2026-11-03 补记：本文件尾部新增 collectMedia()（型号媒体库摊平 + 去重），
+ * 对位小程序 utils/media.js 第 72-175 行。原计划「等第二阶段媒体页再迁」已完成，
+ * 消费方是 view/MediaView.ets。它同样是纯函数，上面这条约定继续成立。
  */
+
+import { parseTime } from './Format';
 
 /**
  * 缩略图 → 原图：space-img/<16 位 hash>.<ext> → space-img/<16 位 hash>_2000.<ext>

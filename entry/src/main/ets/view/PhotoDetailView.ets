@@ -45,6 +45,8 @@ const TEXT_MAIN: string = '#FFFFFF';
 const TEXT_SUB: string = '#6B7891';
 /** 空图提示 .tip 的 #4d5a6e */
 const TEXT_TIP: string = '#4D5A6E';
+/** 介绍正文 .desc-text 的 #b9c2d0 */
+const TEXT_DESC: string = '#B9C2D0';
 
 // ============ 尺寸 ============
 
@@ -83,6 +85,20 @@ export struct PhotoDetailView {
   @Prop @Watch('onUrlChange') url: string = '';
   /** 图注 / 标题 */
   @Prop title: string = '';
+  /**
+   * 以下四个字段对位小程序 photo-detail 的 `_photo_detail` 载荷
+   * （`pages/gallery/gallery.vue:407` 写入）。原来 PhotoNavParam 只有
+   * (url, title)，30vh 可滚动中文介绍与「分类 · 日期 · @署名」副标题都做不出来。
+   * 现在由 NavParam 带过来，缺省空串时行为与之前完全一致。
+   */
+  /** 日期 YYYY-MM-DD */
+  @Prop date: string = '';
+  /** 版权署名（不含 @） */
+  @Prop credit: string = '';
+  /** 分类标签（每日天文 / 每日地球 / 每日一图 / 图片详情） */
+  @Prop tag: string = '';
+  /** 中文介绍正文 */
+  @Prop intro: string = '';
 
   // ============ 缩放与位移状态 ============
 
@@ -403,8 +419,36 @@ export struct PhotoDetailView {
   }
 
   /**
-   * 底部信息条：标题（16vp w600、最多两行、行高 22）+ 副标题（11vp #6B7891）。
-   * 小程序第三块「30vh 可滚动中文介绍」缺数据源，本次不做（详见文件头）。
+   * 副标题：小程序是 `[tag, date, '@'+credit].filter(Boolean).join(' · ')`
+   * （`photo-detail.vue:61`）。三个字段都空时（从发射详情 / 宇航员页进来那种）
+   * 退回一句来源说明，至少告诉用户这张图从哪来、能怎么操作。
+   */
+  private subLine(): string {
+    const parts: string[] = [];
+    if (this.tag.length > 0) {
+      parts.push(this.tag);
+    }
+    if (this.date.length > 0) {
+      parts.push(this.date);
+    }
+    if (this.credit.length > 0) {
+      // 小程序写入时可能已经带 @，渲染前再摘一次，避免出现 @@NASA
+      parts.push('@' + (this.credit.charAt(0) === '@' ? this.credit.substring(1) : this.credit));
+    }
+    if (parts.length === 0) {
+      return '图片来自 SpaceLaunch 图库 · 双击放大';
+    }
+    return parts.join(' · ');
+  }
+
+  /**
+   * 底部信息条：标题（16vp w600、最多两行、行高 22）+ 副标题（11vp #6B7891）
+   * + 30vh 可滚动中文介绍（13vp lh22 #B9C2D0，对位 .desc-text 的 26rpx/44rpx）。
+   *
+   * 介绍区限高 30vh 且可滚：图片仍是主体，长文不挤压画面 —— 这与小程序同一取舍。
+   * 没有介绍时整块不渲染（小程序也是 `{{ intro || '暂无介绍' }}`，但它那块始终占
+   * 30vh；这里改成不占位，因为鸿蒙侧大量图片（发射图 / 飞行器图）本来就没有正文，
+   * 留一块空黑比不留更难看）。
    */
   @Builder
   bottomBar() {
@@ -420,9 +464,7 @@ export struct PhotoDetailView {
         .width('100%')
         .textAlign(TextAlign.Start)
 
-      // 副标题不再从 URL 抠 host；PhotoNavParam 没有日期/版权字段，
-      // 所以这里给一句固定的来源说明，顺带提示可以双击放大。
-      Text('图片来自 SpaceLaunch 图库 · 双击放大')
+      Text(this.subLine())
         .fontSize(11)
         .fontColor(TEXT_SUB)
         .maxLines(1)
@@ -430,6 +472,24 @@ export struct PhotoDetailView {
         .width('100%')
         .textAlign(TextAlign.Start)
         .margin({ top: 5 })
+
+      if (this.intro.length > 0) {
+        Scroll() {
+          Text(this.intro)
+            .fontSize(13)
+            .fontColor(TEXT_DESC)
+            // .desc-text 的 44rpx
+            .lineHeight(22)
+            .width('100%')
+            .textAlign(TextAlign.Start)
+        }
+        .width('100%')
+        // .bar-desc 的 30vh + margin-top 20rpx
+        .height('30%')
+        .margin({ top: 10 })
+        .scrollBar(BarState.Off)
+        .align(Alignment.TopStart)
+      }
     }
     .width('100%')
     // .bar 的 26rpx 32rpx 30rpx

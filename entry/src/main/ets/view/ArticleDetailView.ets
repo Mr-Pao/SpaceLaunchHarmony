@@ -78,11 +78,6 @@ export struct ArticleDetailView {
     return zh.length > 0 ? zh : strOf(this.param.title);
   }
 
-  private bodyText(): string {
-    const zh: string = strOf(this.param.summaryZh);
-    return zh.length > 0 ? zh : strOf(this.param.summary);
-  }
-
   /**
    * 元信息行：来源 + 时间，空值跳过。
    *
