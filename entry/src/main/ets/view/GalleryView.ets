@@ -73,7 +73,7 @@ import {
   MpGalleryRaw, MpGalleryPayload, MpNasaRaw, MpNasaPayload,
   MP_PER_ROW, MP_ROWS
 } from '../components/GalleryGrid';
-import { Nav } from '../routes/Nav';
+import { Nav, CUR_TAB_KEY } from '../routes/Nav';
 import { LaunchNavParam, PhotoNavParam } from '../routes/NavParam';
 import { LaunchSummary } from '../model/Common';
 
@@ -124,6 +124,19 @@ export struct GalleryView {
   /** 呼吸提示的明暗两档，靠 .animation 补间 */
   @State tipOn: boolean = false;
 
+  /**
+   * 当前是不是「图库」这个 tab（下标 2）。
+   *
+   * TabContent 切走**不销毁**页面，`aboutToDisappear` 不会触发，所以 8 条漂移带的
+   * 16ms 定时器必须靠这个开关停掉，否则一直后台空转。Index.ets 在 Tabs.onChange
+   * 里写 CUR_TAB_KEY。
+   */
+  @StorageProp(CUR_TAB_KEY) @Watch('onTabVisible') curTab: number = 2;
+  /** 图库在 FloatingTabBar 里的下标 */
+  private static readonly TAB_INDEX: number = 2;
+  /** 本页是否可见（传给每条带，由带的 @Watch 启停定时器） */
+  @State active: boolean = true;
+
   // ============ 清单模式（「看全部」的落点，见文件头第 7 条） ============
 
   @State listMode: boolean = false;
@@ -160,6 +173,8 @@ export struct GalleryView {
 
   aboutToAppear(): void {
     this.loading = true;
+    // 首帧可能是从别的 tab 切回来的（TabContent 不重建），先按当前 tab 对齐一次
+    this.active = this.curTab === GalleryView.TAB_INDEX;
     this.startTipBreath();
     this.loadGallery();
     this.loadEpic();
@@ -173,6 +188,16 @@ export struct GalleryView {
       clearInterval(this.tipTimer);
       this.tipTimer = -1;
     }
+  }
+
+  /**
+   * 切 tab 时同步可见性。
+   *
+   * 只改 `active`，不动 dx —— 用户切回来时图带应当从原位置继续跑，
+   * 重置回起点会让人感觉「跑了一趟白跑」。
+   */
+  onTabVisible(): void {
+    this.active = this.curTab === GalleryView.TAB_INDEX;
   }
 
   // ============ 加载：四类并行，各自落定 ============
@@ -755,6 +780,8 @@ export struct GalleryView {
           toLeft: band.toLeft,
           weight: band.wide ? BAND_W_WIDE : BAND_TIGHT,
           isLast: index === this.bands.length - 1,
+          // 不可见时停掉这条带的 16ms 定时器
+          active: this.active,
           onOpen: (item: MpImage) => {
             this.openItem(item);
           }

@@ -88,6 +88,19 @@ export const ROUTE_VERSION: string = 'versionPage';
  */
 export const NAV_DETAIL_DEPTH_KEY: string = 'nav_detail_depth';
 
+/**
+ * 当前可见 tab 下标，写进 AppStorage 用的 key。
+ *
+ * 为什么需要它：`TabContent` 里的页面**切走时不会被销毁**（Tabs 只做可见性切换），
+ * 所以 `aboutToDisappear` 根本不会触发。图库的 8 条漂移带各有 16ms 定时器，
+ * 切到别的 tab 后仍在后台每帧推 db —— 白耗电还拖慢前台。
+ *
+ * 订阅方（GalleryView）据此把 `active` 传给每条带，带组件在 @Watch 里启停定时器。
+ * 与 TAB_REQUEST_KEY 的区别：那个是「请求切到某 tab」的一次性指令（自增序号），
+ * 这个是「当前停在哪一页」的持续状态。
+ */
+export const CUR_TAB_KEY: string = 'sl_cur_tab';
+
 export class Nav {
   /** 当前活跃 tab 的路由栈。Index.ets 在 onChange 与首次 onAppear 时写入 */
   static current: NavPathStack | null = null;

@@ -224,6 +224,14 @@ export struct MpBandView {
   @Prop isLast: boolean = false;
   /** 点任意一格。普通成员，@Prop 不用于函数 */
   onOpen: (item: MpImage) => void = () => {};
+  /**
+   * 本页是否可见。false 时停掉定时器。
+   *
+   * 必要性：`TabContent` 切走时**不会销毁页面**（Tabs 只切换可见性），
+   * `aboutToDisappear` 永远不触发。8 条带 × 16ms 定时器切到别的 tab 后仍在每帧
+   * 改 @State → 白耗电、还会拖慢前台页面的帧率。
+   */
+  @Prop @Watch('onActiveChange') active: boolean = true;
 
   /** 当前位移（vp，负数向左） */
   @State dx: number = 0;
@@ -245,9 +253,36 @@ export struct MpBandView {
     const half: number = this.halfW();
     // 向右跑的带起点在 -half（等价于 CSS 的 marqueeR：-50% → 0）
     this.dx = this.toLeft ? 0 : -half;
+    if (this.active) {
+      this.start();
+    }
+  }
+
+  /** 退出 / 切走必须停——不清就是一个高频定时器永远在跑（工程里踩过） */
+  aboutToDisappear(): void {
+    this.stop();
+  }
+
+  /** 父级的 active 变了才启停。同值不重启，避免每帧抖动 */
+  onActiveChange(): void {
+    if (this.active) {
+      this.start();
+    } else {
+      this.stop();
+    }
+  }
+
+  /** 起定时器。已在跑就不重复起（onActiveChange 可能连续触发） */
+  private start(): void {
+    if (this.timer >= 0) {
+      return;
+    }
+    const half: number = this.halfW();
+    if (half <= 0) {
+      return;
+    }
     // 每 tick 前进多少 vp：跑完 half 需要 durMs
     const step: number = half / (this.durMs / TICK_MS);
-
     this.timer = setInterval(() => {
       if (this.toLeft) {
         this.dx = this.dx - step;
@@ -265,8 +300,7 @@ export struct MpBandView {
     }, TICK_MS);
   }
 
-  /** 退出 tab / 页面销毁时必须清——不清就是一个高频定时器永远在跑（工程里踩过） */
-  aboutToDisappear(): void {
+  private stop(): void {
     if (this.timer >= 0) {
       clearInterval(this.timer);
       this.timer = -1;

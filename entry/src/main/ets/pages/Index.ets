@@ -33,7 +33,7 @@ import { GalleryView } from '../view/GalleryView';
 import { RocketView } from '../view/RocketView';
 import { MineView } from '../view/MineView';
 import { FloatingTabBar } from '../components/FloatingTabBar';
-import { Nav, ROUTE_LAUNCH, ROUTE_PHOTO, ROUTE_ROCKET, ROUTE_ARTICLE, ROUTE_NEWSLIST, ROUTE_STATS, ROUTE_ASSETS, ROUTE_NEO, ROUTE_EVENTS, ROUTE_FAVORITES, NAV_DETAIL_DEPTH_KEY, ROUTE_ASTRONAUT, ROUTE_SEARCH, ROUTE_VIDEOS, ROUTE_STATIONS, ROUTE_STATION, ROUTE_EXPEDITION, ROUTE_EVENT, ROUTE_VERSION, ROUTE_AGENCY, ROUTE_PAD, ROUTE_MEDIA } from '../routes/Nav';
+import { Nav, ROUTE_LAUNCH, ROUTE_PHOTO, ROUTE_ROCKET, ROUTE_ARTICLE, ROUTE_NEWSLIST, ROUTE_STATS, ROUTE_ASSETS, ROUTE_NEO, ROUTE_EVENTS, ROUTE_FAVORITES, NAV_DETAIL_DEPTH_KEY, ROUTE_ASTRONAUT, ROUTE_SEARCH, ROUTE_VIDEOS, ROUTE_STATIONS, ROUTE_STATION, ROUTE_EXPEDITION, ROUTE_EVENT, ROUTE_VERSION, ROUTE_AGENCY, ROUTE_PAD, ROUTE_MEDIA, CUR_TAB_KEY } from '../routes/Nav';
 import { LaunchDetailPage, PhotoDetailPage, RocketDetailPage, ArticleDetailPage, NewsListPage, StatsPage, AssetsPage, NeoPage, EventsPage, FavoritesPage, AstronautPage, SearchPage, VideoGalleryPage, StationsPage, StationPage, ExpeditionPage, EventPage, VersionPage, AgencyPage, PadPage, MediaPage } from '../routes/DetailPages';
 import { LaunchNavParam, PhotoNavParam, RocketNavParam, ArticleNavParam, AstronautNavParam, SearchNavParam, VideoNavParam, StationNavParam, ExpeditionNavParam, EventNavParam, AgencyNavParam, PadNavParam, MediaNavParam } from '../routes/NavParam';
 
@@ -90,6 +90,8 @@ struct Index {
     AppStorage.setOrCreate(NAV_DETAIL_DEPTH_KEY, 0);
     // -1 = 没有待处理的切 tab 请求；不初始化的话首帧可能读到 undefined
     AppStorage.setOrCreate(TAB_REQUEST_KEY, -1);
+    // 当前 tab 下标。图库靠它启停 8 条漂移带的定时器（TabContent 切走不销毁）
+    AppStorage.setOrCreate(CUR_TAB_KEY, 0);
   }
 
   /**
@@ -267,6 +269,8 @@ struct Index {
         // 两个来源都会走到这里：胶囊点击（主动 changeIndex）与 Tabs 自身变化。
         this.currentIndex = index;
         Nav.current = this.stackAt(index);
+        // 广播当前 tab：需要「可见才动」的页面订阅它（图库 8 条漂移带）
+        AppStorage.setOrCreate(CUR_TAB_KEY, index);
       })
       .width('100%')
       .height('100%')
