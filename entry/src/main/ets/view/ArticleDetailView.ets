@@ -40,6 +40,12 @@ const TEXT_MAIN: string = '#FFFFFF';
 const TEXT_SUB: string = '#A7B4C7';
 const TEXT_DIM: string = '#55617A';
 const ACCENT: string = '#38BDF8';
+/** 标题色（小程序 .d-title #f2f6fa）：与工程通用白分开 —— 资讯正文区的白要偏冷 */
+const TEXT_HERO: string = '#F2F6FA';
+/** 元信息行两段色（小程序 .d-meta：站点 #5c8fb3、时间 #5d6a7a、分隔 #3d4a58） */
+const TEXT_SITE: string = '#5C8FB3';
+const TEXT_TIME: string = '#5D6A7A';
+const TEXT_SEP: string = '#3D4A58';
 
 /** 页面左右内边距（与 TodayView / LaunchView 的 12 对齐） */
 const PAGE_PAD: number = 12;
@@ -200,38 +206,86 @@ export struct ArticleDetailView {
 
   // ============ UI：正文区 ============
 
+  /**
+   * 正文块。字号/行高/配色一律对位小程序 components/news-detail：
+   *   .d-title 36rpx=18vp w600 lh1.4（18 × 1.4 = 25.2）
+   *   .d-sum   28rpx=14vp lh1.72（14 × 1.72 ≈ 24）；中文 #b9c6d4、英文回退 #8593a3
+   * 中英分色不是装饰：回退成英文时读者要立刻知道「这段没翻」，同色会被当成译文读。
+   */
   @Builder
   articleBlock() {
     Column() {
       Text(this.titleText())
-        .fontSize(20)
+        .fontSize(18)
         .fontWeight(FontWeight.Bold)
-        .fontColor(TEXT_MAIN)
-        .lineHeight(28)
+        .fontColor(TEXT_HERO)
+        .lineHeight(25.2)
         .width('100%')
 
+      // 站点 · 时间：小程序 .d-meta 是**三段异色**（站点蓝、分隔灰、时间灰），
+      // 拼成一个字符串就只能单色，这是逐字对齐必须拆开的地方。
       if (this.metaText().length > 0) {
-        Text(this.metaText())
-          .fontSize(11)
-          .fontColor(TEXT_SUB)
-          .width('100%')
-          .maxLines(2)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-          .margin({ top: 8 })
+        Row() {
+          if (strOf(this.param.site).trim().length > 0) {
+            Text(strOf(this.param.site).trim())
+              .fontSize(11.5)
+              .fontColor(TEXT_SITE)
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+          }
+          if (strOf(this.param.site).trim().length > 0 && strOf(this.param.at).trim().length > 0) {
+            Text('·')
+              .fontSize(11.5)
+              .fontColor(TEXT_SEP)
+              .margin({ left: 5, right: 5 })
+          }
+          if (strOf(this.param.at).trim().length > 0) {
+            Text(strOf(this.param.at).trim())
+              .fontSize(11.5)
+              .fontColor(TEXT_TIME)
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+          }
+        }
+        .width('100%')
+        .alignItems(VerticalAlign.Center)
+        .margin({ top: 8 })
       }
 
-      if (this.bodyText().length > 0) {
-        Text(this.bodyText())
+      if (strOf(this.param.summaryZh).trim().length > 0) {
+        Text(strOf(this.param.summaryZh))
           .fontSize(14)
-          .fontColor(TEXT_SUB)
-          .lineHeight(22)
+          .fontColor('#B9C6D4')
+          .lineHeight(24)
           .width('100%')
-          .margin({ top: 14 })
+          .margin({ top: 13 })
+      } else if (strOf(this.param.summary).trim().length > 0) {
+        Text(strOf(this.param.summary))
+          .fontSize(14)
+          .fontColor('#8593A3')
+          .lineHeight(24)
+          .width('100%')
+          .margin({ top: 13 })
       }
     }
     .width('100%')
     .alignItems(HorizontalAlign.Start)
     .padding({ left: PAGE_PAD, right: PAGE_PAD, top: 14 })
+  }
+
+  /**
+   * 底部提示。小程序 .d-hint 是义务性说明（「不转载正文」），不是随手一句提示 ——
+   * 少了它，用户会以为摘要是全文。
+   */
+  @Builder
+  hintLine() {
+    Text('小程序内不转载正文，复制链接到浏览器可读全文')
+      .width('100%')
+      .fontSize(10.5)
+      .lineHeight(16.8)
+      .fontColor('#4F5B6B')
+      .margin({ top: 7 })
+      .padding({ left: PAGE_PAD, right: PAGE_PAD })
   }
 
   // ============ UI：关联发射 ============
@@ -351,6 +405,7 @@ export struct ArticleDetailView {
 
           // url 为空整块不画（见文件头取舍 2）
           if (strOf(this.param.url).trim().length > 0) {
+            this.hintLine()
             this.copyButton()
           }
         }

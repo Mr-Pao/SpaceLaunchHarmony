@@ -578,11 +578,14 @@ export struct GalleryView {
         continue;
       }
       const id: string = strOf(item.id);
-      const key: string = (id.length > 0 ? id : 'g') + '#' + String(offset + i);
       const given: string = strOf(item.full);
       const guessed: string = fullImageOf(thumb);
       const full: string = given.length > 0 ? given : (guessed.length > 0 ? guessed : thumb);
-      out.push(new MpImage(key, thumb, full, this.titleOf(item.name), 'launch', strOf(item.net)));
+      // ⚠ 第一参必须是真实发射 id，不能为了唯一性拼后缀：
+      // 这个字段一路传到 LaunchNavParam.id 去查发射详情。
+      // ForEach 的 key 由 MpAllGrid 自己拼「id + '#' + index」，索引已经保证唯一。
+      out.push(new MpImage(id.length > 0 ? id : 'g-' + String(offset + i),
+        thumb, full, this.titleOf(item.name), 'launch', strOf(item.net)));
     }
     return out;
   }
@@ -677,6 +680,10 @@ export struct GalleryView {
           radius: '62%',
           colors: [['#2438BDF8', 0.0], ['#0038BDF8', 1.0]]
         })
+        // ⚠ 子节点必须各自设 None：父级 Stack 的 None 只关掉父级自身，
+        // 子节点默认仍是 Default，会把整屏点击全部吃掉
+        // （2026-11-03 实测：图带点不动，就是这两层铺满全屏的光晕在挡）
+        .hitTestBehavior(HitTestMode.None)
 
       // 左下补光（rgba(88,120,255,0.1)）
       Column()
@@ -687,6 +694,7 @@ export struct GalleryView {
           radius: '60%',
           colors: [['#1A5878FF', 0.0], ['#005878FF', 1.0]]
         })
+        .hitTestBehavior(HitTestMode.None)
     }
     .width('100%')
     .height('100%')
@@ -754,6 +762,7 @@ export struct GalleryView {
           angle: 180,
           colors: [['#F0070B12', 0.0], ['#80070B12', 0.55], ['#00070B12', 1.0]]
         })
+        .hitTestBehavior(HitTestMode.None)
 
       // 左侧：宽 45vp（90rpx），向右渐隐（css to right → angle 90）
       Column()
@@ -763,6 +772,7 @@ export struct GalleryView {
           angle: 90,
           colors: [['#EB070B12', 0.0], ['#00070B12', 1.0]]
         })
+        .hitTestBehavior(HitTestMode.None)
 
       // 底部：高 34%，0.98 → 0.6 → 0（css to top → angle 0）
       Stack({ alignContent: Alignment.BottomStart }) {
@@ -773,9 +783,11 @@ export struct GalleryView {
             angle: 0,
             colors: [['#FA070B12', 0.0], ['#99070B12', 0.45], ['#00070B12', 1.0]]
           })
+          .hitTestBehavior(HitTestMode.None)
       }
       .width('100%')
       .height('100%')
+      .hitTestBehavior(HitTestMode.None)
 
       // 右侧：宽 45vp，向左渐隐（css to left → angle 270）
       Stack({ alignContent: Alignment.BottomEnd }) {
@@ -786,9 +798,11 @@ export struct GalleryView {
             angle: 270,
             colors: [['#EB070B12', 0.0], ['#00070B12', 1.0]]
           })
+          .hitTestBehavior(HitTestMode.None)
       }
       .width('100%')
       .height('100%')
+      .hitTestBehavior(HitTestMode.None)
     }
     .width('100%')
     .height('100%')

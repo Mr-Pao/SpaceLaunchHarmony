@@ -1,40 +1,40 @@
 /**
  * view/StationsView.ets —— 空间站列表页
  *
- * 对位小程序 `pages/stations/stations.vue`（203 行）：页头 + 15 张卡的空间站档案。
- * 底色 #0A0E17、不铺星空（只有今日页铺），视觉常量与工程其它页同口径。
+ * 对位小程序 `pages/stations/stations.vue`（203 行）：只有 15 张卡，**没有页头大标题**。
+ *
+ * ── 为什么页头被删掉了（这一条最容易看成「退步」）──
+ *   小程序的标题由 nav-bar 承载：`<nav-bar :solid="navSolid" :title="navSolid ? '空间站' : ''" />`，
+ *   即滚动超过 120 之后 nav 才浮出「空间站」。页面自身 `.page` 顶部没有任何标题、
+ *   没有副标题，第一张卡离顶只有 `.list{margin-top:20rpx}` = 10vp。
+ *   鸿蒙版原来常显「空间站」19vp + 「人类空间站档案 · 15 座」11vp，是**多出来的**，
+ *   与小程序首屏对不齐，因此整块删除，只在列表上方留 10vp。
  *
  * ── 数据链路（照抄 EventsView.ets:126-175 的写法）──
  *   repo.peek<StnPayload>('spacestations')   —— 同步、零网络，冷启动立刻上屏
  *   repo.load<StnPayload>('spacestations', { onCache, onUpdate }) —— 后台刷新
- *     onCache  —— 命中原生缓存时立刻上屏
- *     onUpdate —— 缓存过期、后台拿到新数据时回填
  *   peek 只是「先看一眼」，真正的成败以后面 load() 的 resolve/reject 为准。
  *
  * ── 为什么 failed 与「没数据」必须是两个状态 ──
  *   repo.load 在「弱网 + 无缓存」时是 **reject**，不是返回空数组。
- *   catch 里一旦置 loaded = true，页面就永久停在「暂无空间站」，
+ *   catch 里一旦置 loaded = true，页面就永久停在「暂无空间站数据」，
  *   用户以为真的没有数据，而实际上是网络挂了（原项目踩过的永久空页坑）。
- *   所以 catch 只置 failed，且 failed = list.length === 0：
- *     list 非空                     → 列表（此时刷新失败也继续显示旧数据）
- *     list 空 && failed             → 加载失败 + 重试
- *     list 空 && !loaded && !failed → 加载中
- *     list 空 && loaded && !failed  → 暂无数据
+ *   所以 catch 只置 failed，且 failed = list.length === 0。
  *
- * ── 三处实测结论决定的做法（不是漏做）──
- *   1. **缩略图几乎一定走占位**：spacestations.json 的 img 实测 15 条全是空串，
- *      所以无图占位（#1B2330 + 🛰️）是主路径而不是兜底；同时仍保留 Image 分支
- *      与 onError，上游哪天补图就能直接显示。
- *   2. **在役站排前面**：委托方给的比较器只认 'Active'，其余（'Decommissioned' /
- *      'De-Orbited' / 空值）一律沉底；同一档内保持 CI 原序（sort 是稳定排序的
- *      实现差异不可依赖，所以比较器只做二分，不引入第二排序键）。
- *   3. **状态文案在视图侧补映射**：utils/Format 的 stationStatusZh 不认
- *      'Decommissioned' / 'De-Orbited'，会原样回英文。映射收在 model/Station.ets
- *      的 stnStatusText()，列表与详情共用一份，避免两页文案漂移。
+ * ── 三态文案 1:1（对位 .hint-text / .empty-text）──
+ *   小程序是**纯文字**：加载中 `加载中...`（英文三点）、空态 `暂无空间站数据`，
+ *   都没有 spinner / emoji / 按钮。鸿蒙版原来那套 spinner + 🛰️ + 「稍后重试」全删。
+ *   唯一保留的差异：失败态也复用「暂无空间站数据」这一行字（视觉与空态一致），
+ *   但整块可点 = 重试。理由 —— 删掉重试入口后，弱网无缓存的用户只能杀进程；
+ *   而加按钮又会让失败态的版式与小程序不同，所以做成「文字一致 + 隐形热区」。
+ *
+ * ── 缩略图为什么仍然保留 Image 分支 ──
+ *   img 实测 15 条全为空串，无图占位（#0A0E17 + 🛰️）是主路径而不是兜底；
+ *   但上游哪天补图就该直接显示，所以 Image 分支与 onError 照留。
  *
  * ── 意图边界 ──
  *   点击整卡只走成员回调 onOpen(item)，**本组件不做任何跳转**：
- *   路由接线归主窗口，视图不该知道自己是挂在哪条 NavPathStack 上。
+ *   路由接线归主页面（DetailPages.ets:406-422），视图不该知道自己是挂在哪条 NavPathStack 上。
  *
  * ⚠ 本文件不使用 console.*，日志一律 hilog。不使用 AppStorage / 定时器。
  */
@@ -50,41 +50,57 @@ import { orbitName, stationName } from '../utils/Format';
 const DOMAIN: number = 0x0000;
 const TAG: string = 'StationsView';
 
-// ============ 视觉常量（工程约定） ============
+// ============ 视觉常量 ============
+// 全部按小程序 rpx ÷ 2 折算（750rpx 设计稿 → 375vp）。
 
 const BG_PRIMARY: string = '#0A0E17';
 const CARD_BG: string = '#141A26';
-const TEXT_MAIN: string = '#FFFFFF';
-const TEXT_SUB: string = '#A7B4C7';
-const TEXT_DIM: string = '#55617A';
-/** 中文副标题 / 次级说明用的灰（与 LaunchView、EventsView 的 #6B7891 同源） */
-const TEXT_LABEL: string = '#6B7891';
-/** 卡片里的说明文字，比 #A7B4C7 再暗一档 */
-const TEXT_META: string = '#7A8598';
+/** 站名：小程序 `.name{color:#e2e8f0;font-weight:600}`，不是纯白 */
+const TEXT_NAME: string = '#E2E8F0';
+/** 副行：小程序 `.meta{color:#6b7891}` */
+const TEXT_META: string = '#6B7891';
+/** 箭头：小程序 `.arrow{color:#3d4a5c}` */
+const TEXT_FAINT: string = '#3D4A5C';
 const ACCENT: string = '#38BDF8';
-const ACTIVE_GREEN: string = '#34C759';
-const IDLE_GRAY: string = '#55617A';
-/** 缩略图无图时的底色（任务书给定） */
-const THUMB_BG: string = '#1B2330';
 
-/** 卡片圆角 12vp（工程约定） */
-const CARD_RADIUS: number = 12;
-/** 卡片内边距 12vp：这一页左侧就是 64 的图，14 会显得右边过挤 */
-const CARD_PAD: number = 12;
-/** 卡间距 10vp（工程约定） */
-const CARD_GAP: number = 10;
-/** 缩略图边长 64vp + 圆角 8vp（任务书给定） */
-const THUMB_SIZE: number = 64;
+/** 在役 chip：底 rgba(56,189,248,.16)、字 #38bdf8（不是绿实底） */
+const CHIP_ON_BG: string = '#2938BDF8';
+const CHIP_ON_FG: string = '#38BDF8';
+/** 非在役 chip：底 rgba(255,255,255,.05)、字 #55617a */
+const CHIP_OFF_BG: string = '#0DFFFFFF';
+const CHIP_OFF_FG: string = '#55617A';
+
+/** 缩略图无图时的底色：小程序 `.thumb{background:#0a0e17}`，即页面底色 */
+const THUMB_BG: string = '#0A0E17';
+
+/** 卡片圆角 20rpx = 10vp */
+const CARD_RADIUS: number = 10;
+/** 卡片内边距 20rpx = 10vp */
+const CARD_PAD: number = 10;
+/** 卡间距 18rpx = 9vp */
+const CARD_GAP: number = 9;
+/** 缩略图 120rpx = 60vp 方形，圆角 16rpx = 8vp */
+const THUMB_SIZE: number = 60;
 const THUMB_RADIUS: number = 8;
+/** 图文间距：小程序 `.info{margin:0 18rpx}` = 左右各 9vp */
+const INFO_GAP: number = 9;
 
-/** 页面左右内边距 12（与 TodayView / LaunchView / MineView 对齐） */
-const PAGE_PAD: number = 12;
+/** 页面左右内边距 32rpx = 16vp（对位 `.page{padding:0 32rpx 80rpx}`） */
+const PAGE_PAD: number = 16;
 /**
  * 底部留白 32。
- * 本页是 NavDestination 二级页，打开时悬浮胶囊已被 Nav.markDetailShown() 摘掉，
- * 不需要按 tab 根页那样让位 92~120；32 只够滑到底时最后一张卡不贴边。
+ * 小程序给的是 80rpx=40vp，但本工程二级页统一 32（NavDestination 不再有悬浮胶囊要躲），
+ * 差 8vp 只在滑到底时可见，沿用工程约定以免这一页比别的二级页多一截空白。
  */
 const BOTTOM_PAD: number = 32;
+/** 列表顶部留白：对位 `.list{margin-top:20rpx}` = 10vp（也是被删掉的页头留下的空档） */
+const LIST_TOP: number = 10;
+
+/**
+ * 卡片描边 1rpx → 0.5vp，颜色 rgba(255,255,255,.05) → alpha 0x0D。
+ * 用 '#0DFFFFFF' 而不是 'rgba(...)' 字符串：工程内描边一律走这个写法，便于和 nav-bar 对拍。
+ */
+const CARD_BORDER: string = '#0DFFFFFF';
 
 @Component
 export struct StationsView {
@@ -193,6 +209,7 @@ export struct StationsView {
    * 为什么要自己复制一份再排：this.list 是 @State 数据源，
    * 原地 sort 会在数据没变的情况下改掉引用内容，ArkUI 的 diff 依据不足，
    * 排序结果可能不生效；复制 + 排序 + 整体赋给渲染用的临时数组最稳。
+   * 比较器只做「在役 / 非在役」二分（对位小程序的 sort），同档内保持 CI 原序。
    */
   private sortedList(): StnItem[] {
     const out: StnItem[] = [];
@@ -207,14 +224,6 @@ export struct StationsView {
     return out;
   }
 
-  /** 页头副标题：拿到数据才报座数，避免首屏先闪一个假的 15 */
-  private subtitleText(): string {
-    if (this.list.length > 0) {
-      return '人类空间站档案 · ' + String(this.list.length) + ' 座';
-    }
-    return '人类空间站档案';
-  }
-
   /** 站名：stationName() 查不到时原样返回英文名 */
   private nameOf(item: StnItem): string {
     const zh: string = stationName(stnStr(item.name));
@@ -226,31 +235,28 @@ export struct StationsView {
     return stnStatusText(item.status);
   }
 
-  /** 状态 chip 底色：在役绿，其余灰 */
+  /** 在役 = 蓝色半透明底 + 同色字；其余 = 白色 5% 底 + 三级灰字 */
   private statusBgOf(item: StnItem): string {
-    return stnIsActive(item.status) ? ACTIVE_GREEN : IDLE_GRAY;
+    return stnIsActive(item.status) ? CHIP_ON_BG : CHIP_OFF_BG;
   }
 
-  /** 状态 chip 字色：绿底用深色字，灰底用白字，两条路径对比度都够 */
   private statusFgOf(item: StnItem): string {
-    return stnIsActive(item.status) ? BG_PRIMARY : TEXT_MAIN;
+    return stnIsActive(item.status) ? CHIP_ON_FG : CHIP_OFF_FG;
   }
 
   /**
-   * 第二行：轨道 · 在轨 N 人。
-   * 任一段取不到就跳过，避免留下 " · 在轨 0 人" 或孤零零的分隔符。
+   * 第二行：轨道 · 在轨 N 人（对位 `{{s.orbit || '未知轨道'}} · 在轨 N 人`）。
+   * 轨道缺省时小程序给「未知轨道」，这里照抄，不留空串；
+   * 在轨人数按小程序的 `v-if="s.onboardCrew"` 判真假，0 人就不写这一段。
    */
   private metaOf(item: StnItem): string {
-    const parts: string[] = [];
     const orbit: string = orbitName(stnStr(item.orbit)).trim();
-    if (orbit.length > 0) {
-      parts.push(orbit);
-    }
+    const head: string = orbit.length > 0 ? orbit : '未知轨道';
     const crew: number = stnNum(item.onboardCrew);
     if (crew > 0) {
-      parts.push('在轨 ' + String(crew) + ' 人');
+      return head + ' · 在轨 ' + String(crew) + ' 人';
     }
-    return parts.join(' · ');
+    return head;
   }
 
   /** 缩略图地址（去掉首尾空白，空串等于没有图） */
@@ -269,32 +275,6 @@ export struct StationsView {
     this.onOpen(item);
   }
 
-  // ============ UI：页头 ============
-
-  @Builder
-  header() {
-    Column() {
-      Text('空间站')
-        .fontSize(19)
-        .fontWeight(FontWeight.Bold)
-        .fontColor(TEXT_MAIN)
-        .letterSpacing(1)
-        .width('100%')
-        .maxLines(1)
-
-      Text(this.subtitleText())
-        .fontSize(11)
-        .fontColor(TEXT_LABEL)
-        .width('100%')
-        .maxLines(1)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
-        .margin({ top: 4 })
-    }
-    .width('100%')
-    .alignItems(HorizontalAlign.Start)
-    .padding({ top: 8, bottom: 12 })
-  }
-
   // ============ UI：缩略图 ============
 
   @Builder
@@ -311,7 +291,7 @@ export struct StationsView {
             this.hiddenImgs = this.hiddenImgs.concat([item.id]);
           })
       } else {
-        // 实测 15 条 img 全是空串，这里才是主路径
+        // 实测 15 条 img 全是空串，这里才是主路径；占位 56rpx = 28vp
         Text('🛰️')
           .fontSize(28)
           .width(THUMB_SIZE)
@@ -338,46 +318,46 @@ export struct StationsView {
         Row() {
           Text(this.nameOf(item))
             .fontSize(15)
-            .fontWeight(FontWeight.Medium)
-            .fontColor(TEXT_MAIN)
+            // 小程序 w600；ArkTS 没有 Semibold 枚举，用 600 的字重数值最接近
+            .fontWeight(600)
+            .fontColor(TEXT_NAME)
             .maxLines(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
             .layoutWeight(1)
 
           if (this.statusOf(item).length > 0) {
+            // 19rpx = 9.5vp、padding 3rpx 12rpx = 1.5/6vp、圆角 6rpx = 3vp
             Text(this.statusOf(item))
-              .fontSize(10)
-              .fontWeight(FontWeight.Bold)
+              .fontSize(9.5)
               .fontColor(this.statusFgOf(item))
               .backgroundColor(this.statusBgOf(item))
-              .padding({ left: 7, right: 7, top: 2, bottom: 2 })
-              .borderRadius(4)
-              .margin({ left: 8 })
+              .padding({ left: 6, right: 6, top: 1.5, bottom: 1.5 })
+              .borderRadius(3)
+              .margin({ left: 6 })
               .maxLines(1)
           }
         }
         .width('100%')
         .alignItems(VerticalAlign.Center)
 
-        if (this.metaOf(item).length > 0) {
-          Text(this.metaOf(item))
-            .fontSize(11.5)
-            .fontColor(TEXT_META)
-            .width('100%')
-            .maxLines(1)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
-            .margin({ top: 6 })
-        }
+        Text(this.metaOf(item))
+          .fontSize(11)
+          .fontColor(TEXT_META)
+          .width('100%')
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .margin({ top: 5 })
       }
       .layoutWeight(1)
       .alignItems(HorizontalAlign.Start)
       .justifyContent(FlexAlign.Center)
-      .padding({ left: 12, right: 8 })
+      .padding({ left: INFO_GAP, right: INFO_GAP })
+      // 两行文字的块与 60vp 的图等高，名称/副行才能贴着图的垂直中线分布
       .height(THUMB_SIZE)
 
       Text('›')
-        .fontSize(18)
-        .fontColor(TEXT_DIM)
+        .fontSize(17)
+        .fontColor(TEXT_FAINT)
         .maxLines(1)
     }
     .width('100%')
@@ -385,98 +365,50 @@ export struct StationsView {
     .padding(CARD_PAD)
     .borderRadius(CARD_RADIUS)
     .backgroundColor(CARD_BG)
+    .border({ width: 0.5, color: CARD_BORDER })
     .onClick(() => {
       this.openItem(item);
     })
   }
 
-  // ============ UI：三套占位 ============
+  // ============ UI：三态（纯文字，对位 .hint-text / .empty-text） ============
 
   @Builder
-  loadingBlock() {
+  hintBlock(text: string, tappable: boolean) {
     Column() {
-      LoadingProgress()
-        .width(36)
-        .height(36)
-        .color(ACCENT)
-      Text('正在加载空间站…')
-        .fontSize(12)
-        .fontColor(TEXT_DIM)
-        .margin({ top: 10 })
-    }
-    .width('100%')
-    .layoutWeight(1)
-    .justifyContent(FlexAlign.Center)
-    .alignItems(HorizontalAlign.Center)
-  }
-
-  @Builder
-  failedBlock() {
-    Column() {
-      Text('空间站数据加载失败')
-        .fontSize(15)
-        .fontWeight(FontWeight.Medium)
-        .fontColor(TEXT_MAIN)
-      Text('网络不给力，或缓存已被清理')
-        .fontSize(12)
-        .fontColor(TEXT_DIM)
-        .margin({ top: 8 })
-
-      Row() {
-        Text('重试')
-          .fontSize(12.5)
-          .fontColor(ACCENT)
-      }
-      .padding({ left: 18, right: 18, top: 7, bottom: 7 })
-      .borderRadius(16)
-      .backgroundColor('#16222F')
-      .margin({ top: 16 })
-      .onClick(() => {
-        this.retry();
-      })
-    }
-    .width('100%')
-    .layoutWeight(1)
-    .justifyContent(FlexAlign.Center)
-    .alignItems(HorizontalAlign.Center)
-    .padding({ left: 24, right: 24 })
-  }
-
-  @Builder
-  emptyBlock() {
-    Column() {
-      Text('🛰️')
-        .fontSize(34)
-        .opacity(0.5)
-      Text('暂无空间站数据')
+      Text(text)
         .fontSize(13)
-        .fontColor(TEXT_SUB)
-        .margin({ top: 10 })
-      Text('稍后重试')
-        .fontSize(11)
-        .fontColor(TEXT_DIM)
-        .margin({ top: 6 })
+        .fontColor(TEXT_META)
+        .textAlign(TextAlign.Center)
+        .width('100%')
     }
     .width('100%')
     .layoutWeight(1)
-    .justifyContent(FlexAlign.Center)
-    .alignItems(HorizontalAlign.Center)
+    .justifyContent(FlexAlign.Start)
+    // 小程序 `padding:200rpx 40rpx` = 上 100vp、左右 20vp，文字落在屏幕上方三分之一处
+    .padding({ top: 100, left: 20, right: 20 })
+    .onClick(() => {
+      // 只有失败态可点（tappable），加载中 / 真·空态点了没意义
+      if (tappable) {
+        this.retry();
+      }
+    })
   }
 
   // ============ build ============
 
   build() {
     Column() {
-      this.header()
-
       if (this.sortedList().length === 0) {
         // 三种「空」绝不合并：失败 / 还在加载 / 真的没有（见文件头状态说明）
         if (this.failed) {
-          this.failedBlock()
+          // 文案与空态一致，但整块可点重试（隐形热区，不加按钮）
+          this.hintBlock('暂无空间站数据', true)
         } else if (!this.loaded) {
-          this.loadingBlock()
+          // 小程序原文就是英文三点，别改成中文省略号
+          this.hintBlock('加载中...', false)
         } else {
-          this.emptyBlock()
+          this.hintBlock('暂无空间站数据', false)
         }
       } else {
         List() {
@@ -485,12 +417,15 @@ export struct StationsView {
               this.card(item)
             }
             .padding({ bottom: CARD_GAP })
-          }, (item: StnItem) => String(item.id))
+          // key 里带上 hiddenImgs 长度：缩略图 onError 只改 @State 数组，
+          // 而 @Builder 按值传参不会因此重建，靠 key 变化强制这张卡重算占位分支
+          }, (item: StnItem) => String(item.id) + '#' + String(this.hiddenImgs.length))
         }
-        // 只给 layoutWeight：同时再写 height('100%') 会让测量拿到父级已扣掉页头的
-        // 高度却又按父级 100% 撑开，滑到底时常多出一条空白
+        // 只给 layoutWeight：同时再写 height('100%') 会让测量拿到父级已扣掉页头的高度
+        // 却又按父级 100% 撑开，滑到底时常多出一条空白
         .width('100%')
         .layoutWeight(1)
+        .padding({ top: LIST_TOP })
         .scrollBar(BarState.Off)
         .edgeEffect(EdgeEffect.Spring)
         .cachedCount(3)

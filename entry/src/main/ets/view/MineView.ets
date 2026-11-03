@@ -6,9 +6,9 @@
  *   → hero：辉光 + 76vp 圆形真图 logo + 双色字标 + 标语 + 三格统计（收藏 / 提醒 / 当前版本）
  *   → 我的收藏（.rows 列表 + 右上「全部 ›」）
  *   → 收藏的火箭（.rows 列表）
- *   → 我的提醒（数据层尚未落地，见文件末「未做」说明）
+ *   → 我的提醒（🔔 行 + 名称 + meta + ›，点击进发射详情）
  *   → 三块全空时的青虚线引导卡（.tips）
- *   → 探索（5 格，48.6% 百分宽）
+ *   → 探索（4 格，48.6% 百分宽）
  *   → 数据与设置（鸿蒙增量，视觉按「关于」行对齐）
  *   → 关于（4 行 + CC-BY 长注）
  *   → 页脚一句
@@ -23,12 +23,13 @@
  *   2. 「我的收藏」右上多一个「全部 ›」。小程序没有这一行：它的清单就 5 条封顶、
  *      也不存在收藏专页；鸿蒙有独立的 FavoritesView（还能长按删除），
  *      不给门就等于把删除能力藏起来。这是**有意的功能增量**。
- *   3. 「我的提醒」只统计、不渲染清单。鸿蒙侧没有任何「提醒」开关
- *      （LaunchDetailView 顶栏只有 ☆ 收藏），preferences 里不可能出现数据；
- *      为了不摆一个永远空的区块，这里沿用小程序「有数据才显示」的 v-if 规则 ——
- *      区块自然不出现。计数仍从同一个 key 读，将来详情页接上开关就自动生效。
+ *   3. 「我的提醒」照小程序的**完整清单**渲染（🔔 行 + 名称 + meta + ›，点击进发射详情），
+ *      key 仍是 `reminded_launches`。鸿蒙侧目前**没有写入方**（LaunchDetailView 顶栏只有
+ *      ☆ 收藏），所以这份清单现在必然为空、区块自然不出现 —— 这是数据为空，不是没做。
+ *      刻意不塞假数据：凭空冒出几条「提醒」比空白更糟。
  *   4. 没有「联系作者」。小程序用的是微信客服通道（<button open-type="contact">），
- *      鸿蒙没有对应能力，也不该伪造一个点了没反应的入口 —— 直接不出现这一行。
+ *      鸿蒙没有对应能力；伪造一个「发消息」按钮、或凭空编一个邮箱地址，都比省略更糟
+ *      （编出来的邮箱发出去没人收，用户会以为作者不回复）。这一行**直接省略**。
  *   5. 多一组「数据与设置」（数据结构说明 / 数据更新 / 清理缓存 / 关于）。
  *      小程序靠微信清缓存、靠「关于」弹窗回答一切；鸿蒙是本地文件缓存，用户必须能
  *      自己清、也必须能看见最后同步时间，否则弱网问题无从排查。视觉上刻意与
@@ -44,11 +45,12 @@
 
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { BusinessError } from '@kit.BasicServicesKit';
-import { preferences } from '@kit.ArkData';
 import { common } from '@kit.AbilityKit';
 import { repo, LoadOptions, DataSet, CacheStats } from '../data/Repository';
 import { fileStore } from '../data/FileStore';
-import { formatGeneratedAt, formatShort, relativeTime } from '../utils/Format';
+import { formatGeneratedAt, formatShort, relativeTime, statusOf, strOf } from '../utils/Format';
+import { LaunchSummary, LaunchMission } from '../model/Common';
+import { UpcomingPayload, PreviousPayload } from '../model/Launch';
 import { StarField } from '../components/StarField';
 import {
   Nav,
@@ -60,7 +62,7 @@ import {
   ROUTE_VERSION
 } from '../routes/Nav';
 import { LaunchNavParam, RocketNavParam } from '../routes/NavParam';
-import { favInit, favList, FavItem, FAV_VERSION_KEY } from '../data/Favorites';
+import { favInit, favList, remindedList, FavItem, FAV_VERSION_KEY } from '../data/Favorites';
 import { rocketFavInit, rocketFavList, MvRocketFav, RKF_VERSION_KEY } from '../data/RocketFavorites';
 import { currentVersion } from '../constants/Changelog';
 
@@ -123,12 +125,9 @@ const TILE_H: number = 108;
 const BOTTOM_PAD: number = 92;
 /** 构建日期，手写；改版本时顺手改这里 */
 const APP_BUILD: string = '2026-11-02';
-/**
- * 提醒清单在 preferences 里的键名。
- * 与小程序 mine.vue:198 的 REMIND_KEY 同名 —— 鸿蒙侧目前没有写入方，
- * 这个 key 只用于「将来接上提醒开关后计数自动生效」，不是死代码。
- */
-const REMIND_KEY: string = 'reminded_launches';
+// 提醒清单的键名不在这里定义：`reminded_launches` 的读法收口到
+// data/Favorites.ets 的 remindedList()。同一份存储有两个读取入口，
+// 迟早会分叉出两种解析口径（一个去空、一个不去空），所以本页只反查 id。
 
 /** 字节数 → 人读体积（utils/Format.ets 是纯时间/文本层，没有体积函数） */
 function formatBytes(bytes: number): string {
@@ -187,8 +186,17 @@ export struct MineView {
   /** 已收藏的火箭型号（最多 SHOW_MAX 条） */
   @State rocketItems: MvRocketFav[] = [];
   @State rocketTotal: number = 0;
-  /** 提醒条数。今天恒为 0，理由见文件头「差异 3」 */
+  /** 提醒条数（清单可能被截断，头部「N 条」用真实总数） */
   @State remindTotal: number = 0;
+  /**
+   * 我的提醒清单（最多 SHOW_MAX 条）。
+   *
+   * 用 LaunchSummary 而不是自造一个精简类：小程序的 `rems` 就是**回查出来的发射对象**
+   * （mine.vue 的 loadFavs 拿 upcoming + previous 建 Map，再用 id 反查），
+   * 行里的格式短时间 / 相对时间 / 状态都从它身上取。照抄同一套口径，
+   * 收藏行与提醒行的 meta 才是同一个函数算出来的。
+   */
+  @State remindItems: LaunchSummary[] = [];
   /** 最近一次数据同步的人读时间 */
   @State lastSyncText: string = '尚未同步';
   @State refreshing: boolean = false;
@@ -212,8 +220,22 @@ export struct MineView {
    */
   @StorageProp(RKF_VERSION_KEY) @Watch('onRkFavChanged') rkFavVersion: number = 0;
 
-  /** 提醒计数用的 preferences 句柄（与 Favorites 同名实例，互不干扰） */
-  private remindPrefs: preferences.Preferences | null = null;
+  /**
+   * 提醒 id → 发射对象的解析缓存。
+   *
+   * 不在页面里自己开 preferences：`reminded_launches` 的读法收口在 data/Favorites.ets
+   * 的 remindedList() 里，这里只负责「id 反查对象」。两条清单在不同页面被改，
+   * 多一个读取入口就多一处会分叉的口径。
+   */
+  private remindIds: string[] = [];
+  /**
+   * id → 发射对象 的现查索引（upcoming + previous 两张表合成）。
+   *
+   * 收藏行要显示状态、提醒行要显示整条发射信息，两边都需要「按 id 拿对象」。
+   * 一次 reloadLists 建一次索引，比每行各 peek 一次省事，也保证两处的
+   * 取数口径完全一致。
+   */
+  private launchIndex: Map<string, LaunchSummary> = new Map<string, LaunchSummary>();
 
   /**
    * 探索格。**与小程序 entries 完全一致的四格**。
@@ -253,22 +275,10 @@ export struct MineView {
     if (ctx !== undefined) {
       favInit(ctx);
       rocketFavInit(ctx);
-      this.openRemindPrefs(ctx);
     }
     this.reloadLists();
     this.refreshCacheInfo();
     this.loadLastSync(false);
-  }
-
-  /** 打开提醒计数用的 preferences。失败不抛：计数是装饰性的，坏了也不该白屏 */
-  private openRemindPrefs(ctx: common.Context): void {
-    try {
-      const opt: preferences.Options = { name: 'spacelaunch_prefs' };
-      this.remindPrefs = preferences.getPreferencesSync(ctx, opt);
-    } catch (e) {
-      hilog.warn(DOMAIN, TAG, '提醒计数用的 preferences 打开失败，按 0 处理');
-      this.remindPrefs = null;
-    }
   }
 
   /**
@@ -302,35 +312,67 @@ export struct MineView {
     this.rocketTotal = rockets.length;
     this.rocketItems = rockets.length > SHOW_MAX ? rockets.slice(0, SHOW_MAX) : rockets;
 
-    this.readRemindCount();
+    this.readRemindList();
   }
 
   /**
-   * 提醒条数。
+   * 重读提醒清单。
    *
-   * 小程序把提醒记在 `reminded_launches`（一个 id 数组）。鸿蒙侧目前没有写入方
-   * （详情页没有「提醒」按钮），所以这里必然读到空 —— 但**不去伪造一个别的 key**：
-   * 将来详情页接提醒开关时，只要沿用同名 key，这一格与清单就会自己活过来。
-   * 解析失败、非数组、空串一律按 0。
+   * 小程序把提醒记在 `reminded_launches`（一个 id 数组），渲染时拿 id 回查发射对象。
+   * 鸿蒙侧沿用同名 key，**但目前没有任何写入方**（发射详情只做了收藏星标、没有
+   * 「提醒」按钮），所以现在必然读到空 —— 这是照实呈现，不塞假数据：
+   * 将来详情页接上提醒开关、写入同名 key，这一块会自己活过来。
+   *
+   * 查不到对象的 id **不占位**，与小程序 pick() 同口径（否则会出现一行只有 id 的空壳）。
    */
-  private readRemindCount(): void {
-    const p: preferences.Preferences | null = this.remindPrefs;
-    if (p === null) {
-      this.remindTotal = 0;
-      return;
-    }
-    try {
-      const raw: preferences.ValueType = p.getSync(REMIND_KEY, '');
-      if (typeof raw !== 'string' || raw.length === 0) {
-        this.remindTotal = 0;
-        return;
+  private readRemindList(): void {
+    this.remindIds = remindedList();
+    this.remindTotal = this.remindIds.length;
+    this.buildLaunchIndex();
+
+    const picked: LaunchSummary[] = [];
+    let i: number = 0;
+    while (i < this.remindIds.length && picked.length < SHOW_MAX) {
+      const hit: LaunchSummary | undefined = this.launchIndex.get(this.remindIds[i]);
+      if (hit !== undefined) {
+        picked.push(hit);
       }
-      // JSON.parse 必须 as：ArkTS 不接受隐式 any
-      const arr: string[] = JSON.parse(raw) as string[];
-      this.remindTotal = arr.length;
-    } catch (e) {
-      this.remindTotal = 0;
+      i++;
     }
+    this.remindItems = picked;
+  }
+
+  /**
+   * 建 id → 发射对象 的索引（upcoming + previous）。
+   *
+   * 收藏行要显示状态、提醒行要显示整条发射信息，两边都得「按 id 拿对象」。
+   * 一次重建供两处共用，既不重复 peek，也保证两处的取数口径不会分叉。
+   * 用 peek 而不是 load：这是纯本地查询，页面不该因为建索引去发网络请求。
+   */
+  private buildLaunchIndex(): void {
+    const idx: Map<string, LaunchSummary> = new Map<string, LaunchSummary>();
+
+    const up: UpcomingPayload | null = repo.peek<UpcomingPayload>('upcoming');
+    if (up !== null) {
+      for (let i = 0; i < up.list.length; i++) {
+        const one: LaunchSummary = up.list[i];
+        if (one.id.length > 0) {
+          idx.set(one.id, one);
+        }
+      }
+    }
+
+    const prev: PreviousPayload | null = repo.peek<PreviousPayload>('previous');
+    if (prev !== null) {
+      for (let i = 0; i < prev.list.length; i++) {
+        const one: LaunchSummary = prev.list[i];
+        if (one.id.length > 0) {
+          idx.set(one.id, one);
+        }
+      }
+    }
+
+    this.launchIndex = idx;
   }
 
   /**
@@ -433,12 +475,45 @@ export struct MineView {
   }
 
   /**
-   * 清单行次要信息。
-   * 小程序口径（mine.vue:274-279）= 短时间 · 相对时间 · 状态；鸿蒙的 FavItem 没存
-   * 状态快照，改显示火箭型号（没有则场地）——「这次是什么火箭、在哪打」比
-   * 一行状态码对收藏列表更有用。
+   * 发射对象的次要信息：短时间 · 相对时间 · 状态。
+   *
+   * 与小程序 metaOf(x)（mine.vue:274-279）完全同口径 —— 三个字段、同一个
+   * `filter(Boolean).join(' · ')` 语义（这里用 parts 数组 + 非空判断等价实现）。
+   * 状态走 statusOf()，它会优先取 status.nameZh，没有中文就用英文名、再退缩写。
+   */
+  private metaOfLaunch(sum: LaunchSummary): string {
+    const parts: string[] = [];
+    const t: string = formatShort(sum.net);
+    if (t.length > 0) {
+      parts.push(t);
+    }
+    const rel: string = relativeTime(sum.net);
+    if (rel.length > 0 && rel !== t) {
+      parts.push(rel);
+    }
+    const st: string = statusOf(sum).text;
+    if (st.length > 0) {
+      parts.push(st);
+    }
+    return parts.join(' · ');
+  }
+
+  /**
+   * 收藏行次要信息。
+   *
+   * 小程序口径是「短时间 · 相对时间 · 状态」。FavItem **没有 status 快照**
+   * （存的是 id/net/title/rocketName/image/siteName/savedAt），所以状态只能
+   * 拿 id 去 launchIndex 现查：查得到就用真状态，查不到（如很早的发射已滚出
+   * upcoming/previous 窗口）退回火箭型号 / 场地 —— 那仍比留一个「未知」有用。
+   * 改数据层加 status 字段属越界（写作用域只允许必要时动 Favorites.ets 的读法），
+   * 现查是这条约束下最接近小程序的解。
    */
   private favMeta(item: FavItem): string {
+    const sum: LaunchSummary | undefined = this.launchIndex.get(item.id);
+    if (sum !== undefined) {
+      return this.metaOfLaunch(sum);
+    }
+
     const parts: string[] = [];
     const t: string = formatShort(item.net);
     if (t.length > 0) {
@@ -454,6 +529,31 @@ export struct MineView {
       parts.push(item.siteName);
     }
     return parts.join(' · ');
+  }
+
+  /**
+   * 提醒行标题。
+   *
+   * 小程序 goLaunch 只传 id、标题由目标页自己取；鸿蒙这边行内要先显示一个名字，
+   * 所以按「任务中文名 → 任务英文名 → 发射名」的优先级取 —— 与工程里
+   * LaunchCard 的取题口径一致（先把翻译出来的任务名给用户看，没有才退英文）。
+   */
+  private remindTitle(item: LaunchSummary): string {
+    const m: LaunchMission | undefined = item.mission;
+    // 只判 undefined 不判 null：类型上是 `LaunchMission | undefined`，
+    // 多写一个 `!== null` 在 ArkTS 的严格比较下会报「两种类型没有重叠」。
+    if (m !== undefined) {
+      const zh: string = strOf(m.nameZh);
+      if (zh.length > 0) {
+        return zh;
+      }
+      const en: string = strOf(m.name);
+      if (en.length > 0) {
+        return en;
+      }
+    }
+    const name: string = strOf(item.name);
+    return name.length > 0 ? name : '未命名任务';
   }
 
   /** 「数据与设置」行的右侧值。同样必须现算，理由同 statValue() */
@@ -775,7 +875,7 @@ export struct MineView {
 
         Text(this.favMeta(item))
           .width('100%')
-          .fontSize(11)
+          .fontSize(11.5)
           .fontColor(TEXT_LABEL)
           .margin({ top: 4 })
           .maxLines(1)
@@ -835,7 +935,7 @@ export struct MineView {
 
         Text('运载火箭')
           .width('100%')
-          .fontSize(11)
+          .fontSize(11.5)
           .fontColor(TEXT_LABEL)
           .margin({ top: 4 })
           .maxLines(1)
@@ -866,7 +966,7 @@ export struct MineView {
       Row() {
         Text('我的收藏')
           .fontSize(17)
-          .fontWeight(FontWeight.Medium)
+          .fontWeight(600)
           .fontColor('#FFFFFF')
           .letterSpacing(0.5)
 
@@ -915,7 +1015,7 @@ export struct MineView {
       Row() {
         Text('收藏的火箭')
           .fontSize(17)
-          .fontWeight(FontWeight.Medium)
+          .fontWeight(600)
           .fontColor('#FFFFFF')
           .letterSpacing(0.5)
 
@@ -934,6 +1034,103 @@ export struct MineView {
         ForEach(this.rocketItems, (item: MvRocketFav) => {
           this.rocketRow(item)
         }, (item: MvRocketFav) => 'rk' + item.name)
+      }
+      .width('100%')
+      .backgroundColor(CARD_BG)
+      .borderRadius(11)
+      .border({ width: 1, color: CARD_BORDER })
+      .clip(true)
+    }
+    .width('100%')
+    .alignItems(HorizontalAlign.Start)
+    .margin({ top: 22 })
+  }
+
+  /**
+   * 提醒行：与收藏行同构，但**没有图**，占位固定 🔔。
+   *
+   * 小程序 .row-ph 就是这个形状（🔔 + 22vp opacity .45），因为它回查到的发射对象
+   * 虽然带 imageThumb，提醒那份清单里却统一走占位 —— 照抄外观，别自作聪明加图。
+   */
+  @Builder
+  remindRow(item: LaunchSummary) {
+    Row() {
+      Stack({ alignContent: Alignment.Center }) {
+        Text('🔔')
+          .fontSize(22)
+          .opacity(0.45)
+      }
+      .width(ROW_IMG)
+      .height(ROW_IMG)
+      .borderRadius(7)
+      .backgroundColor(IMG_BG)
+
+      Column() {
+        Text(this.remindTitle(item))
+          .width('100%')
+          .fontSize(14)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(ROW_TITLE)
+          .lineHeight(20)
+          .maxLines(2)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+        Text(this.metaOfLaunch(item))
+          .width('100%')
+          .fontSize(11.5)
+          .fontColor(TEXT_LABEL)
+          .margin({ top: 4 })
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+      }
+      .alignItems(HorizontalAlign.Start)
+      .layoutWeight(1)
+      .margin({ left: 9, right: 9 })
+      .clip(true)
+
+      Text('›')
+        .fontSize(16)
+        .fontColor(ARROW)
+    }
+    .width('100%')
+    .alignItems(VerticalAlign.Center)
+    .padding({ top: 10, bottom: 10, left: 12, right: 12 })
+    .onClick(() => {
+      Nav.pushLaunch(new LaunchNavParam(item.id, item.net, this.remindTitle(item)));
+    })
+  }
+
+  /**
+   * 「我的提醒」整块。
+   *
+   * 头部「N 条」不带「全部 ›」：小程序那边提醒**没有独立页**（收藏有 FavoritesView 的等价物，
+   * 提醒没有），多一个箭头点了没处去。所以这里只保留计数。
+   * 整块在 build() 里由 remindItems.length > 0 守卫 —— 空清单不渲染空壳（小程序同理）。
+   */
+  @Builder
+  remindBlock() {
+    Column() {
+      Row() {
+        Text('我的提醒')
+          .fontSize(17)
+          .fontWeight(600)
+          .fontColor('#FFFFFF')
+          .letterSpacing(0.5)
+
+        Column().layoutWeight(1)
+
+        Text(String(this.remindTotal) + ' 条')
+          .fontSize(12)
+          .fontColor(TEXT_LABEL)
+      }
+      .width('100%')
+      .alignItems(VerticalAlign.Bottom)
+      .margin({ bottom: 10 })
+
+      Column() {
+        ForEach(this.remindItems, (item: LaunchSummary) => {
+          this.remindRow(item)
+        }, (item: LaunchSummary) => 'rm' + item.id)
       }
       .width('100%')
       .backgroundColor(CARD_BG)
@@ -984,7 +1181,7 @@ export struct MineView {
     Text(title)
       .width('100%')
       .fontSize(17)
-      .fontWeight(FontWeight.Medium)
+      .fontWeight(600)
       .fontColor('#FFFFFF')
       .letterSpacing(0.5)
       .margin({ top: 22, bottom: 10 })
@@ -1195,16 +1392,22 @@ export struct MineView {
           this.heroBlock()
 
           // 三块清单都按「有数据才显示」——与小程序 v-if 一致，不给空区块占位。
-          // 提醒目前只进统计、不渲染清单（见文件头差异 3），所以这里只判两块。
           if (this.favItems.length > 0) {
             this.favoriteBlock()
           }
           if (this.rocketItems.length > 0) {
             this.rocketBlock()
           }
-          // 引导卡的判定只看「页面上一块清单都没有」。不把 remindTotal 算进来：
-          // 提醒这一块没有渲染体，算进来会造出「没清单、也没引导卡，页面空一块」的死角。
-          if (this.favItems.length === 0 && this.rocketItems.length === 0) {
+          // 顺序照 mine.vue：收藏 → 火箭 → 提醒。提醒在最后，因为它是三者里
+          // 触发路径最深的一个（要先进发射详情）。
+          if (this.remindItems.length > 0) {
+            this.remindBlock()
+          }
+          // 引导卡的判定看「三块清单是不是都空」。提醒现在恒为空（无写入方），
+          // 但判定仍把它算进来：将来接上提醒开关后，只有提醒的用户不该再看到
+          // 「你的清单会出现在这里」。
+          if (this.favItems.length === 0 && this.rocketItems.length === 0
+            && this.remindItems.length === 0) {
             this.tipsCard()
           }
 

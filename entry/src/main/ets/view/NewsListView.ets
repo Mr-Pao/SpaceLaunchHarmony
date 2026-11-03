@@ -1,106 +1,133 @@
 /**
- * view/NewsListView.ets —— 航天资讯列表页
+ * view/NewsListView.ets —— 航天资讯列表（对位小程序 pages/news/news.vue）
  *
- * 对位小程序 `pages/news` 列表态（components/news-section 的完整列表）。
- * 小程序是一个页面内「折叠前 N 条 + 展开」，鸿蒙侧做成**独立路由页**：
- * 首页那块 NewsSection 只露 3 条，点「查看全部 ›」进这里看全量。
+ * 结构（与小程序同序）：
+ *   topBar（标题只在滚过一屏后才出现，对应 nav-bar 的 :solid）
+ *   → hero：24vp「航天资讯」+ 12vp「N 条报道 · M 家媒体 · 已中文编译」
+ *   → 两个筛选 tab：全部 / 关联发射
+ *   → 列表（卡片 100×75 缩略图 + 两行标题 + 两行摘要 + 站点·时间·「发射」标签）
+ *   → 页脚（上滑加载更多 x / y，或刷新时间）
+ *   → 来源署名
  *
- * ── 数据链路（与 LaunchView / RocketDetailView 同口径）──
- *   repo.peek<NewsPayload>('news')  —— 同步、零网络，冷启动立刻有内容
- *   repo.load<NewsPayload>('news', {onCache, onUpdate})
- *     onCache  —— 命中原生缓存时立刻上屏
- *     onUpdate —— 缓存过期、后台静默刷新拿到新数据时回填（只有 generatedAt 变了才回调）
+ * ── 为什么详情改成页内弹窗 ──
+ * 小程序的详情是**页内底部弹层**（components/news-detail：mask .62 + 82vh 的 sheet），
+ * 下滑即关、tabBar 仍在下面；鸿蒙原来是整页 NavDestination，体感是「跳进了另一个页面」，
+ * 返回还得重新找位置。这里用 bindSheet 还原成弹层，是本轮对齐的主改动。
  *
- * ── 四态为什么必须分开（原项目踩过的坑）──
- *   小程序 utils/data.js 的 load() 在「弱网 + 无缓存」时是 **reject**。
- *   如果 catch 里直接置 loaded = true，页面就永久停在空列表，用户以为真的没有资讯。
- *   所以这里的失败态用独立的 @State failed 表示，与「空列表」严格分开：
- *     loading && 空    → 加载中
- *     failed  && 空    → 加载失败 + 重试
- *     !failed && 空    → 暂无资讯
- *     list 非空        → 列表（此时哪怕刷新失败也继续显示旧数据）
+ * ArticleDetailView.ets **不删**：routes/DetailPages.ets 仍在引用它（搜索结果等入口），
+ * 删掉直接编译失败。它的正文样式也按同一版口径调过，两个入口观感一致。
  *
- * ── 有意差异 ──
- *   1. **底部 padding 24，不是 92**。这一页在详情页栈里，底部没有悬浮胶囊
- *      （Index.ets 在 detailDepth > 0 时把胶囊整个摘掉了），照抄 92 会多出一块空白。
- *   2. **不用 LazyForEach**。news.json 线上实测 100 余条、几十 KB，
- *      List 自带的复用 + cachedCount(3) 足够；LazyForEach 要写 IDataSource，
- *      对这个体量是纯负担。
- *   3. **缩略图 onError 退到占位**。占位垫在图层下方（同 components/NewsSection
- *      的做法），失败时只把 Image 摘掉，不额外维护一张「失败 id 表」。
+ * ── 分页 ──
+ * 小程序 RENDER_STEP=30 + onReachBottom 追加；鸿蒙用 List.onReachEnd 触发同一步进。
+ * 一次性 ForEach 全量在 44 条时看不出问题，但 news.json 上限 200 条，先做对。
+ *
+ * ── 与原版的差异（都是有意的）──
+ *   1. 去掉了「资讯加载失败」三态里的重试胶囊：小程序根本没有失败态，加载失败就落到
+ *      空态文案。多一个只有鸿蒙才有的错误页，等于自己造一个不对齐的界面。
+ *   2. hero 与 tab 是固定头部（不随列表滚走）。小程序整页滚动会把 hero 滚掉，
+ *      但鸿蒙这里 topBar 是自绘的、没有系统 nav-bar 兜底，hero 一滚走顶部就只剩一条
+ *      返回箭头，反而更空。固定住换来的一屏高度约 98vp，可接受。
+ *   3. 详情弹窗里「查看相关发射」的重叠层是本文件内的 Stack 覆盖层，不是第二个
+ *      bindSheet —— 嵌套 sheet 在 HarmonyOS 上时序不稳（关上一层会连带关掉下一层）。
  *
  * ⚠ 本文件不使用 console.*，日志一律 hilog。
  */
 
 import { hilog } from '@kit.PerformanceAnalysisKit';
-import { BusinessError } from '@kit.BasicServicesKit';
+import { pasteboard, BusinessError } from '@kit.BasicServicesKit';
 import { repo, LoadOptions } from '../data/Repository';
 import { NewsItem, NewsPayload, NewsLaunchRef } from '../model/News';
 import { strOf, formatGeneratedAt } from '../utils/Format';
 import { Nav } from '../routes/Nav';
-import { ArticleNavParam } from '../routes/NavParam';
+import { LaunchNavParam } from '../routes/NavParam';
 
 const DOMAIN: number = 0x0000;
 const TAG: string = 'NewsListView';
 
-// ============ 视觉常量（工程约定） ============
+// ============ 视觉常量（全部来自 wxss ÷ 2） ============
 
 const BG_PRIMARY: string = '#0A0E17';
-const CARD_BG: string = '#141A26';
-const TEXT_MAIN: string = '#FFFFFF';
-const TEXT_SUB: string = '#A7B4C7';
-const TEXT_DIM: string = '#55617A';
+/** 弹层底色 #0a0f16（比页面底色略深一档，弹层才有「浮起来」的层次） */
+const SHEET_BG: string = '#0A0F16';
+/** 相关发射选择层底色 */
+const PICK_BG: string = '#0F1520';
 const ACCENT: string = '#38BDF8';
+const ACCENT_DEEP: string = '#04121C';
 
-/** 页面左右内边距（与 TodayView / LaunchView 的 12 对齐） */
-const PAGE_PAD: number = 12;
+const TEXT_HERO: string = '#F2F6FA';
+const TEXT_HERO_SUB: string = '#7B8898';
+const TEXT_TITLE: string = '#EAF0F6';
+const TEXT_SUM: string = '#7F8C9C';
+const TEXT_SITE: string = '#5C8FB3';
+const TEXT_TIME: string = '#5D6A7A';
+const TEXT_SEP: string = '#3D4A58';
+const TEXT_FOOT: string = '#59667A';
+const TEXT_SRC: string = '#44526A';
+const TEXT_STATE: string = '#6B7787';
+
+/** 卡片底 rgba(255,255,255,.035) */
+const CARD_BG: string = '#09FFFFFF';
+/** 卡片描边 rgba(255,255,255,.06) */
+const CARD_BORDER: string = '#0FFFFFFF';
+/** tab 未选中底 rgba(255,255,255,.05) / 描边 .07 */
+const TAB_BG: string = '#0DFFFFFF';
+const TAB_BORDER: string = '#12FFFFFF';
+const TAB_TEXT: string = '#93A1B1';
+const THUMB_BG: string = '#0B1118';
+
+const THUMB_W: number = 100;
+const THUMB_H: number = 75;
+const PAGE_PAD: number = 16;
+const LIST_PAD: number = 12;
+const RENDER_STEP: number = 30;
+
 /**
- * 底部内边距：**24 不是 92**。
- * 本页属于详情页栈，底部没有悬浮胶囊（见文件头取舍 1）。
- */
-const BOTTOM_PAD: number = 24;
-
-/** 缩略图 96×72（任务书给定），比例 4:3 */
-const THUMB_W: number = 96;
-const THUMB_H: number = 72;
-
-/**
- * 单条缩略图。
+ * 弹窗里正在看的那一条。
  *
- * 为什么单独拆一个 @Component：图片失败是**每条自己的**状态，
- * 挂在列表页上就得维护一张「失败 id 表」并处理集合的响应式更新（ArkTS 对 Set
- * 的元素增删不保证触发重绘）。拆成组件后每条一个 @State imgErr，最简单也最稳。
+ * 不用 NewsItem 直接当 @State：interface 不能 new，`@State cur: NewsItem | null` 在
+ * @Builder 里做非空收窄 ArkTS 不认（属性访问不收窄），会一路报「对象可能为空」。
+ * 转成一个全字段带默认值的 class 最稳，也顺带把「弹窗只需要这几个字段」写清楚了。
  */
+class Nw2Cur {
+  id: string = '';
+  title: string = '';
+  summary: string = '';
+  summaryZh: string = '';
+  image: string = '';
+  site: string = '';
+  url: string = '';
+  atShort: string = '';
+  refs: NewsLaunchRef[] = [];
+}
+
+/** 缩略图：真图 + 加载失败回落到渐变占位。抽成组件是为了让 @State imgErr 各自独立 */
 @Component
 struct NewsListThumb {
-  /** 封面地址；空串直接画占位 */
   @Prop src: string = '';
-
-  /** 加载失败 → 只撤掉 Image，露出下面的占位层 */
   @State imgErr: boolean = false;
 
   build() {
     Stack({ alignContent: Alignment.Center }) {
-      // 占位垫在最底下：图空 / 加载失败时露出来的就是这块渐变 + 🛰
       Column()
-        .width(THUMB_W)
-        .height(THUMB_H)
-        .borderRadius(8)
+        .width('100%')
+        .height('100%')
+        .borderRadius(7)
         .linearGradient({
           angle: 135,
-          colors: [['#16233A', 0.0], ['#0D1420', 1.0]]
+          colors: [['#0D1620', 0.0], ['#101C28', 1.0]]
         })
 
       Text('🛰')
-        .fontSize(20)
-        .fontColor('#5D6A7D')
+        .fontSize(22)
+        .opacity(0.4)
 
       if (strOf(this.src).length > 0 && !this.imgErr) {
         Image(this.src)
-          .width(THUMB_W)
-          .height(THUMB_H)
-          .borderRadius(8)
+          .width('100%')
+          .height('100%')
           .objectFit(ImageFit.Cover)
+          .borderRadius(7)
+          .backgroundColor(THUMB_BG)
           .onError(() => {
             this.imgErr = true;
           })
@@ -108,44 +135,56 @@ struct NewsListThumb {
     }
     .width(THUMB_W)
     .height(THUMB_H)
+    .borderRadius(7)
+    .backgroundColor(THUMB_BG)
   }
 }
 
 @Component
 export struct NewsListView {
-  // ============ 页面状态 ============
+  // ============ 状态 ============
 
-  /** 列表数据（按 CI 给的顺序，新的在前 —— 与 NewsSection 同口径，不重排） */
   @State list: NewsItem[] = [];
-  /** 首屏等待（只挡内容区，返回栏始终在） */
   @State loading: boolean = true;
-  /** 无缓存 + 网络失败。与「空列表」严格分开，见文件头四态说明 */
-  @State failed: boolean = false;
-  /** 数据生成时间，用于副标题「更新于 hh:mm」 */
+  @State refreshing: boolean = false;
   @State generatedAt: string = '';
 
-  /** 列表滚动容器 */
-  private scroller: Scroller = new Scroller();
-  /** 防重入：返回再进来不应叠请求 */
-  private loadingNow: boolean = false;
+  /** false = 全部；true = 只看有关联发射的报道 */
+  @State onlyLaunch: boolean = false;
+  /** 已渲染条数（小程序 renderCount），触底 +RENDER_STEP */
+  @State renderCount: number = RENDER_STEP;
+  /** 滚过一张卡片后 topBar 才出标题（对应 nav-bar :solid） */
+  @State navSolid: boolean = false;
 
-  // ============ 生命周期 ============
+  /** 详情弹窗开合 */
+  @State sheetOn: boolean = false;
+  @State cur: Nw2Cur = new Nw2Cur();
+  /** 弹窗内封面加载失败 */
+  @State imgErr: boolean = false;
+  /** 多条相关发射时的选择层 */
+  @State pickOn: boolean = false;
+
+  private scroller: Scroller = new Scroller();
+  /** 网络请求防重入（下拉刷新与 onReachEnd 可能同一帧都触发） */
+  private loadingNow: boolean = false;
+  /** 分页防重入 */
+  private moreLock: boolean = false;
 
   aboutToAppear(): void {
     this.loadNews(false);
   }
 
-  // ============ 加载 ============
+  // ============ 数据 ============
 
   private loadNews(force: boolean): void {
     if (this.loadingNow) {
+      // 正在跑就把下拉动画收掉，否则 Refresh 的转圈会一直挂着
+      this.refreshing = false;
       return;
     }
     this.loadingNow = true;
     this.loading = true;
-    this.failed = false;
 
-    // 先 peek：同步、零网络，冷启动能立刻把列表画出来（缓存里有就直接不显示加载态）
     const cached: NewsPayload | null = repo.peek<NewsPayload>('news');
     if (cached !== null) {
       this.applyPayload(cached);
@@ -156,48 +195,113 @@ export struct NewsListView {
 
     const opts: LoadOptions<NewsPayload> = {
       force: force,
-      onCache: (data: NewsPayload) => {
-        this.applyPayload(data);
+      onCache: (d: NewsPayload) => {
+        this.applyPayload(d);
       },
-      onUpdate: (data: NewsPayload) => {
-        this.applyPayload(data);
+      onUpdate: (d: NewsPayload) => {
+        this.applyPayload(d);
       }
     };
 
     repo.load<NewsPayload>('news', opts)
-      .then((data: NewsPayload) => {
-        this.applyPayload(data);
-        this.loading = false;
-        this.failed = false;
+      .then(() => {
+        hilog.info(DOMAIN, TAG, '资讯加载完成');
       })
       .catch((e: BusinessError) => {
-        this.loading = false;
-        // 已经有内容就别说失败，静默留在旧列表上（后台刷新失败不该打断阅读）
-        this.failed = this.list.length === 0;
-        hilog.warn(DOMAIN, TAG, 'news 加载失败: %{public}s', e.message);
+        hilog.warn(DOMAIN, TAG, '资讯加载失败：%{public}s', JSON.stringify(e));
       })
+      // 收尾必须挂在 catch 之后：成功与失败都要把两个锁放掉
       .then(() => {
         this.loadingNow = false;
+        this.loading = false;
+        this.refreshing = false;
       });
   }
 
-  /** 数据落地：整体替换数组才能触发 @State 的数组重绘 */
   private applyPayload(data: NewsPayload): void {
     const raw: NewsItem[] | undefined = data.list;
-    const next: NewsItem[] = raw !== undefined && raw !== null ? raw : [];
-    // 一条都没有时保持原样：中途一次半截数据不该把已有列表清空
-    if (next.length === 0 && this.list.length > 0) {
+    if (raw === undefined || raw.length === 0) {
       return;
     }
-    this.list = next;
+    this.list = raw;
     this.generatedAt = strOf(data.generatedAt);
   }
 
-  private retry(): void {
+  private onPullRefresh(): void {
+    // 下拉刷新把已渲染条数一起重置 —— 小程序 getData(true) 也重算 renderCount
+    this.refreshing = true;
+    this.renderCount = RENDER_STEP;
     this.loadNews(true);
   }
 
-  // ============ 派生值 ============
+  private onReachEnd(): void {
+    if (this.moreLock) {
+      return;
+    }
+    const total: number = this.filtered().length;
+    if (this.renderCount >= total) {
+      return;
+    }
+    this.moreLock = true;
+    const next: number = this.renderCount + RENDER_STEP;
+    this.renderCount = next > total ? total : next;
+    this.moreLock = false;
+  }
+
+  private switchTab(only: boolean): void {
+    if (this.onlyLaunch === only) {
+      return;
+    }
+    this.onlyLaunch = only;
+    // 切 tab 必须重置分页，否则「全部」翻到 120 条后切到关联发射会直接显示 120 条
+    this.renderCount = RENDER_STEP;
+    this.navSolid = false;
+  }
+
+  // ============ 派生 ============
+
+  /** 有关联发射：launchRefs 是 CI 补好的可跳转信息，launches 只有 UUID */
+  private hasLaunch(item: NewsItem): boolean {
+    const refs: NewsLaunchRef[] | undefined = item.launchRefs;
+    if (refs !== undefined && refs.length > 0) {
+      return true;
+    }
+    const ids: string[] | undefined = item.launches;
+    return ids !== undefined && ids.length > 0;
+  }
+
+  private filtered(): NewsItem[] {
+    if (!this.onlyLaunch) {
+      return this.list;
+    }
+    const out: NewsItem[] = [];
+    for (let i = 0; i < this.list.length; i++) {
+      if (this.hasLaunch(this.list[i])) {
+        out.push(this.list[i]);
+      }
+    }
+    return out;
+  }
+
+  private visible(): NewsItem[] {
+    const all: NewsItem[] = this.filtered();
+    return all.length > this.renderCount ? all.slice(0, this.renderCount) : all;
+  }
+
+  private siteCount(): number {
+    const seen: Set<string> = new Set<string>();
+    for (let i = 0; i < this.list.length; i++) {
+      const s: string = strOf(this.list[i].site);
+      if (s.length > 0) {
+        seen.add(s);
+      }
+    }
+    return seen.size;
+  }
+
+  private heroSub(): string {
+    return String(this.list.length) + ' 条报道 · ' + String(this.siteCount()) + ' 家媒体 · 已中文编译';
+  }
 
   private titleOf(item: NewsItem): string {
     const zh: string = strOf(item.titleZh);
@@ -209,170 +313,265 @@ export struct NewsListView {
     return zh.length > 0 ? zh : strOf(item.summary);
   }
 
-  /** 「共 N 条 · 更新于 hh:mm」；更新时间拿不到就只留条数 */
-  private subtitleText(): string {
-    const parts: string[] = ['共 ' + this.list.length + ' 条'];
-    const updated: string = formatGeneratedAt(this.generatedAt);
-    if (updated.length > 0) {
-      parts.push('更新于 ' + updated);
+  private footText(): string {
+    const total: number = this.filtered().length;
+    if (this.renderCount < total) {
+      return '上滑加载更多（' + String(this.renderCount) + ' / ' + String(total) + '）';
     }
-    return parts.join(' · ');
-  }
-
-  /** 元信息：site · atShort，空值跳过（避免留下孤零零的分隔符） */
-  private metaOf(item: NewsItem): string {
-    const parts: string[] = [];
-    const site: string = strOf(item.site).trim();
-    if (site.length > 0) {
-      parts.push(site);
+    if (this.generatedAt.length > 0) {
+      return '更新于 ' + formatGeneratedAt(this.generatedAt);
     }
-    const at: string = strOf(item.atShort).trim();
-    if (at.length > 0) {
-      parts.push(at);
-    }
-    return parts.join(' · ');
+    return '已显示全部';
   }
 
   // ============ 交互 ============
 
-  /**
-   * 打开资讯详情。
-   *
-   * 字段逐条赋给 ArticleNavParam 而不是塞进 constructor：
-   * 10 个字段的全参构造调用点会变得极长，且顺序错了编译器不报错
-   * （同类型全是 string），逐字段赋值反而更难写错。
-   */
-  private openArticle(item: NewsItem): void {
-    const p: ArticleNavParam = new ArticleNavParam();
-    p.id = String(item.id);
-    p.title = strOf(item.title);
-    p.titleZh = strOf(item.titleZh);
-    p.summary = strOf(item.summary);
-    p.summaryZh = strOf(item.summaryZh);
-    p.image = strOf(item.image);
-    p.site = strOf(item.site);
-    p.url = strOf(item.url);
-    p.at = strOf(item.at);
+  private openSheet(item: NewsItem): void {
+    const c: Nw2Cur = new Nw2Cur();
+    c.id = String(item.id);
+    c.title = this.titleOf(item);
+    c.summary = strOf(item.summary);
+    c.summaryZh = strOf(item.summaryZh);
+    c.image = strOf(item.image);
+    c.site = strOf(item.site);
+    c.url = strOf(item.url);
+    c.atShort = strOf(item.atShort);
+
     const refs: NewsLaunchRef[] | undefined = item.launchRefs;
-    p.launchRefs = refs !== undefined && refs !== null ? refs : [];
-    Nav.pushArticle(p);
+    if (refs !== undefined) {
+      const keep: NewsLaunchRef[] = [];
+      for (let i = 0; i < refs.length; i++) {
+        if (refs[i] !== undefined && strOf(refs[i].id).length > 0) {
+          keep.push(refs[i]);
+        }
+      }
+      c.refs = keep;
+    }
+
+    this.cur = c;
+    this.imgErr = false;
+    this.pickOn = false;
+    this.sheetOn = true;
   }
 
-  // ============ UI：顶栏 ============
+  private copyUrl(): void {
+    const url: string = this.cur.url;
+    if (url.length === 0) {
+      return;
+    }
+    const data: pasteboard.PasteData =
+      pasteboard.createData(pasteboard.MIMETYPE_TEXT_PLAIN, url);
+    pasteboard.getSystemPasteboard().setData(data).then(() => {
+      this.toast('原文链接已复制');
+    }).catch((e: BusinessError) => {
+      hilog.warn(DOMAIN, TAG, '复制失败：%{public}s', JSON.stringify(e));
+      this.toast('复制失败，请稍后重试');
+    });
+  }
+
+  private toast(msg: string): void {
+    this.getUIContext().getPromptAction().showToast({ message: msg, duration: 2000 });
+  }
+
+  private refName(ref: NewsLaunchRef): string {
+    const n: string = strOf(ref.name);
+    return n.length > 0 ? n : '相关发射';
+  }
+
+  private primaryIsCopy(): boolean {
+    return this.cur.refs.length === 0;
+  }
+
+  private openRefs(): void {
+    if (this.cur.refs.length === 1) {
+      this.goRef(this.cur.refs[0]);
+      return;
+    }
+    this.pickOn = true;
+  }
+
+  private goRef(ref: NewsLaunchRef): void {
+    // 先关弹层再跳：不关的话返回时 sheet 还盖在上面，看着像没跳成功
+    this.sheetOn = false;
+    this.pickOn = false;
+    Nav.pushLaunch(new LaunchNavParam(strOf(ref.id), strOf(ref.net), this.refName(ref)));
+  }
+
+  // ============ UI：头部 ============
 
   /**
-   * 自绘顶部栏（NavDestination 那边 hideTitleBar(true)）。
-   * 结构与 RocketDetailView.topBar 一致：‹ 返回 + 标题 + 右侧留白。
+   * 顶栏。标题只在滚过一张卡之后出现 —— 小程序 nav-bar 的 solid 也是滚过 120 才给标题，
+   * 静止时靠 hero 那颗 24vp 的大标题出声，两个标题不同时出现。
    */
   @Builder
   topBar() {
     Row() {
-      Row() {
-        Text('‹')
-          .fontSize(20)
-          .fontColor(TEXT_MAIN)
-          .lineHeight(20)
-        Text('返回')
-          .fontSize(14)
-          .fontColor(TEXT_SUB)
-          .margin({ left: 2 })
-      }
-      .alignItems(VerticalAlign.Center)
-      .padding({ right: 12, top: 10, bottom: 10 })
-      .onClick(() => {
-        Nav.pop();
-      })
+      Text('‹')
+        .fontSize(20)
+        .fontColor('#FFFFFF')
+        .padding({ right: 8, top: 10, bottom: 10, left: 4 })
+        .onClick(() => {
+          Nav.pop();
+        })
 
-      Text('航天资讯')
-        .fontSize(15)
-        .fontWeight(FontWeight.Bold)
-        .fontColor(TEXT_MAIN)
-        .maxLines(1)
-        .layoutWeight(1)
+      if (this.navSolid) {
+        Text('航天资讯')
+          .fontSize(17)
+          .fontWeight(FontWeight.Medium)
+          .fontColor('#FFFFFF')
+      }
     }
     .width('100%')
     .alignItems(VerticalAlign.Center)
-    .padding({ left: PAGE_PAD, right: PAGE_PAD })
+    .padding({ left: PAGE_PAD - 4, right: PAGE_PAD })
     .backgroundColor(BG_PRIMARY)
   }
 
-  /** 副标题行：19vp 主标题已在顶栏，这里只放「共 N 条 · 更新于 hh:mm」 */
+  /** hero：24vp 大标题 + 12vp 统计副标题（小程序 .hero / .hero-title / .hero-sub） */
   @Builder
-  subHeader() {
-    Text(this.loading && this.list.length === 0 ? '正在加载资讯…' : this.subtitleText())
-      .fontSize(11)
-      .fontColor('#6B7891')
-      .width('100%')
-      .maxLines(1)
-      .textOverflow({ overflow: TextOverflow.Ellipsis })
-      .padding({ left: PAGE_PAD, right: PAGE_PAD, bottom: 10 })
+  heroBlock() {
+    Column() {
+      Text('航天资讯')
+        .width('100%')
+        .fontSize(24)
+        .fontWeight(FontWeight.Bold)
+        .fontColor(TEXT_HERO)
+        .letterSpacing(0.5)
+
+      Text(this.heroSub())
+        .width('100%')
+        .fontSize(12)
+        .fontColor(TEXT_HERO_SUB)
+        .margin({ top: 5 })
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+    }
+    .width('100%')
+    .alignItems(HorizontalAlign.Start)
+    .padding({ top: 10, bottom: 4, left: PAGE_PAD, right: PAGE_PAD })
   }
 
-  // ============ UI：单条 ============
+  /**
+   * 两个筛选 chip。
+   *
+   * 颜色全部读 this.onlyLaunch，而不是把 `on` 当参数传进一个带参 @Builder ——
+   * @Builder 的按值参数不建立响应式依赖，切换 tab 时 chip 会停在旧配色上。
+   */
+  @Builder
+  tabsBlock() {
+    Row() {
+      Text('全部')
+        .fontSize(12.5)
+        .fontColor(this.onlyLaunch ? TAB_TEXT : ACCENT_DEEP)
+        .fontWeight(this.onlyLaunch ? FontWeight.Normal : FontWeight.Medium)
+        .padding({ top: 5, bottom: 5, left: 13, right: 13 })
+        .borderRadius(999)
+        .backgroundColor(this.onlyLaunch ? TAB_BG : ACCENT)
+        .border({ width: 1, color: this.onlyLaunch ? TAB_BORDER : ACCENT })
+        .margin({ right: 8 })
+        .onClick(() => {
+          this.switchTab(false);
+        })
+
+      Text('关联发射')
+        .fontSize(12.5)
+        .fontColor(this.onlyLaunch ? ACCENT_DEEP : TAB_TEXT)
+        .fontWeight(this.onlyLaunch ? FontWeight.Medium : FontWeight.Normal)
+        .padding({ top: 5, bottom: 5, left: 13, right: 13 })
+        .borderRadius(999)
+        .backgroundColor(this.onlyLaunch ? ACCENT : TAB_BG)
+        .border({ width: 1, color: this.onlyLaunch ? ACCENT : TAB_BORDER })
+        .onClick(() => {
+          this.switchTab(true);
+        })
+    }
+    .width('100%')
+    .padding({ top: 9, bottom: 3, left: PAGE_PAD, right: PAGE_PAD })
+  }
+
+  // ============ UI：卡片 ============
 
   @Builder
-  row(item: NewsItem) {
+  card(item: NewsItem) {
     Row() {
-      NewsListThumb({ src: strOf(item.image) })
+      NewsListThumb({ src: item.image === undefined ? '' : item.image })
 
       Column() {
         Text(this.titleOf(item))
-          .fontSize(14)
-          .lineHeight(20)
-          .fontWeight(FontWeight.Medium)
-          .fontColor('#EAF0F6')
           .width('100%')
+          .fontSize(14)
+          .lineHeight(19.5)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(TEXT_TITLE)
           .maxLines(2)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
 
-        if (this.summaryOf(item).length > 0) {
-          Text(this.summaryOf(item))
-            .fontSize(11)
-            .lineHeight(15)
-            .fontColor(TEXT_SUB)
-            .width('100%')
-            .maxLines(1)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
-            .margin({ top: 4 })
-        }
+        // 摘要两行：小程序 .sum 是 -webkit-line-clamp:2
+        Text(this.summaryOf(item))
+          .width('100%')
+          .fontSize(11.5)
+          .lineHeight(16.5)
+          .fontColor(TEXT_SUM)
+          .margin({ top: 4 })
+          .maxLines(2)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
 
-        if (this.metaOf(item).length > 0) {
-          Text(this.metaOf(item))
-            .fontSize(11)
-            .fontColor(TEXT_DIM)
-            .width('100%')
+        // 站点 · 时间 · 「发射」标签，三段不同色，必须拆三个 Text
+        Row() {
+          Text(strOf(item.site))
+            .fontSize(10.5)
+            .fontColor(TEXT_SITE)
             .maxLines(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
-            .margin({ top: 4 })
+
+          Text('·')
+            .fontSize(10.5)
+            .fontColor(TEXT_SEP)
+            .margin({ left: 4, right: 4 })
+
+          Text(strOf(item.atShort))
+            .fontSize(10.5)
+            .fontColor(TEXT_TIME)
+
+          if (this.hasLaunch(item)) {
+            Text('发射')
+              .fontSize(9.5)
+              .fontColor(ACCENT)
+              .padding({ left: 4, right: 4, top: 0.5, bottom: 0.5 })
+              .border({ width: 1, color: '#6638BDF8' })
+              .borderRadius(3)
+              .margin({ left: 7 })
+          }
         }
+        .width('100%')
+        .alignItems(VerticalAlign.Center)
+        .margin({ top: 6 })
       }
-      .layoutWeight(1)
       .alignItems(HorizontalAlign.Start)
+      .layoutWeight(1)
       .margin({ left: 10 })
+      .clip(true)
     }
     .width('100%')
     .alignItems(VerticalAlign.Top)
-    .padding(10)
+    .padding(11)
     .backgroundColor(CARD_BG)
-    .borderRadius(12)
+    .borderRadius(10)
+    .border({ width: 1, color: CARD_BORDER })
     .onClick(() => {
-      this.openArticle(item);
+      this.openSheet(item);
     })
   }
 
-  // ============ UI：三套占位 ============
+  // ============ UI：三态 ============
 
+  /** 加载态：小程序是纯文字（没有转圈），照抄 */
   @Builder
   loadingBlock() {
     Column() {
-      LoadingProgress()
-        .width(36)
-        .height(36)
-        .color(ACCENT)
       Text('正在加载资讯…')
-        .fontSize(12)
-        .fontColor(TEXT_DIM)
-        .margin({ top: 10 })
+        .fontSize(13)
+        .fontColor(TEXT_STATE)
     }
     .width('100%')
     .layoutWeight(1)
@@ -380,70 +579,253 @@ export struct NewsListView {
     .alignItems(HorizontalAlign.Center)
   }
 
-  @Builder
-  failedBlock() {
-    Column() {
-      Text('资讯加载失败')
-        .fontSize(15)
-        .fontWeight(FontWeight.Medium)
-        .fontColor(TEXT_MAIN)
-      Text('网络不给力，或缓存已被清理')
-        .fontSize(12)
-        .fontColor(TEXT_DIM)
-        .margin({ top: 8 })
-
-      Row() {
-        Text('重试')
-          .fontSize(12.5)
-          .fontColor(ACCENT)
-      }
-      .padding({ left: 18, right: 18, top: 7, bottom: 7 })
-      .borderRadius(16)
-      .backgroundColor('#16222F')
-      .margin({ top: 16 })
-      .onClick(() => {
-        this.retry();
-      })
-
-      Row() {
-        Text('‹ 返回')
-          .fontSize(12.5)
-          .fontColor(TEXT_SUB)
-      }
-      .padding({ left: 16, right: 16, top: 7, bottom: 7 })
-      .borderRadius(16)
-      .backgroundColor(CARD_BG)
-      .margin({ top: 12 })
-      .onClick(() => {
-        Nav.pop();
-      })
-    }
-    .width('100%')
-    .layoutWeight(1)
-    .justifyContent(FlexAlign.Center)
-    .alignItems(HorizontalAlign.Center)
-    .padding({ left: 24, right: 24 })
-  }
-
+  /** 空态：单行文字，无图标（小程序 .empty 只有一句） */
   @Builder
   emptyBlock() {
     Column() {
-      Text('📰')
-        .fontSize(34)
-        .opacity(0.5)
-      Text('暂无航天资讯')
+      Text(this.onlyLaunch ? '暂无关联发射的报道' : '暂无资讯')
         .fontSize(13)
-        .fontColor(TEXT_SUB)
-        .margin({ top: 10 })
-      Text('数据每 3 小时更新一轮，稍后再来看看')
-        .fontSize(11)
-        .fontColor(TEXT_DIM)
-        .margin({ top: 6 })
+        .fontColor(TEXT_STATE)
     }
     .width('100%')
     .layoutWeight(1)
     .justifyContent(FlexAlign.Center)
     .alignItems(HorizontalAlign.Center)
+  }
+
+  // ============ UI：详情弹窗 ============
+
+  /** 顶部 grab 条：36×4，rgba(255,255,255,.18) */
+  @Builder
+  sheetGrab() {
+    Row() {
+      Row()
+        .width(36)
+        .height(4)
+        .borderRadius(2)
+        .backgroundColor('#2EFFFFFF')
+    }
+    .width('100%')
+    .justifyContent(FlexAlign.Center)
+    .padding({ top: 9, bottom: 3 })
+  }
+
+  /** 弹窗正文。所有内容读 this.cur —— 无参 @Builder 才会跟着 @State 刷新 */
+  @Builder
+  sheetBody() {
+    Column() {
+      if (this.cur.image.length > 0 && !this.imgErr) {
+        Image(this.cur.image)
+          .width('100%')
+          .height(200)
+          .objectFit(ImageFit.Cover)
+          .borderRadius(9)
+          .backgroundColor(THUMB_BG)
+          .margin({ bottom: 12 })
+          .onError(() => {
+            this.imgErr = true;
+          })
+      }
+
+      // 标题 18vp / 行高 1.4 → 25.2，w600（小程序 .d-title 36rpx/1.4/600）
+      Text(this.cur.title)
+        .width('100%')
+        .fontSize(18)
+        .lineHeight(25.2)
+        .fontWeight(FontWeight.Bold)
+        .fontColor(TEXT_HERO)
+
+      Row() {
+        Text(this.cur.site)
+          .fontSize(11.5)
+          .fontColor(TEXT_SITE)
+
+        Text('·')
+          .fontSize(11.5)
+          .fontColor(TEXT_SEP)
+          .margin({ left: 5, right: 5 })
+
+        Text(this.cur.atShort)
+          .fontSize(11.5)
+          .fontColor(TEXT_TIME)
+      }
+      .width('100%')
+      .alignItems(VerticalAlign.Center)
+      .margin({ top: 8 })
+
+      // 正文：中文 14vp lh1.72 #b9c6d4；回退到英文时换成 #8593a3（小程序 .d-en 分色）
+      if (this.cur.summaryZh.length > 0) {
+        Text(this.cur.summaryZh)
+          .width('100%')
+          .fontSize(14)
+          .lineHeight(24)
+          .fontColor('#B9C6D4')
+          .margin({ top: 13 })
+      } else if (this.cur.summary.length > 0) {
+        Text(this.cur.summary)
+          .width('100%')
+          .fontSize(14)
+          .lineHeight(24)
+          .fontColor('#8593A3')
+          .margin({ top: 13 })
+      }
+
+      // 两个按钮：有相关发射时「查看相关发射」才是主按钮
+      Flex({ wrap: FlexWrap.Wrap }) {
+        if (this.cur.url.length > 0) {
+          Text('复制原文链接')
+            .fontSize(13)
+            .fontColor(this.primaryIsCopy() ? ACCENT_DEEP : '#CFE0EE')
+            .fontWeight(this.primaryIsCopy() ? FontWeight.Medium : FontWeight.Normal)
+            .padding({ top: 10, bottom: 10, left: 17, right: 17 })
+            .borderRadius(999)
+            .backgroundColor(this.primaryIsCopy() ? ACCENT : '#12FFFFFF')
+            .border({ width: 1, color: this.primaryIsCopy() ? ACCENT : '#1AFFFFFF' })
+            .margin({ right: 9, bottom: 8 })
+            .onClick(() => {
+              this.copyUrl();
+            })
+        }
+
+        if (this.cur.refs.length > 0) {
+          Text('查看相关发射')
+            .fontSize(13)
+            .fontColor(this.primaryIsCopy() ? '#CFE0EE' : ACCENT_DEEP)
+            .fontWeight(this.primaryIsCopy() ? FontWeight.Normal : FontWeight.Medium)
+            .padding({ top: 10, bottom: 10, left: 17, right: 17 })
+            .borderRadius(999)
+            .backgroundColor(this.primaryIsCopy() ? '#12FFFFFF' : ACCENT)
+            .border({ width: 1, color: this.primaryIsCopy() ? '#1AFFFFFF' : ACCENT })
+            .margin({ right: 9, bottom: 8 })
+            .onClick(() => {
+              this.openRefs();
+            })
+        }
+      }
+      .width('100%')
+      .margin({ top: 18 })
+
+      Text('小程序内不转载正文，复制链接到浏览器可读全文')
+        .width('100%')
+        .fontSize(10.5)
+        .lineHeight(16.8)
+        .fontColor('#4F5B6B')
+        .margin({ top: 7 })
+    }
+    .width('100%')
+    .alignItems(HorizontalAlign.Start)
+    .padding({ top: 3, bottom: 20, left: 16, right: 16 })
+  }
+
+  /** 多条相关发射的选择层（小程序 .pick-mask + .pick-sheet） */
+  @Builder
+  pickerLayer() {
+    Column() {
+      // 上半屏是点击关闭区，别做成「点了没反应」
+      Column()
+        .width('100%')
+        .layoutWeight(1)
+        .onClick(() => {
+          this.pickOn = false;
+        })
+
+      Column() {
+        Text('选择相关发射')
+          .fontSize(15)
+          .fontWeight(FontWeight.Medium)
+          .fontColor('#FFFFFF')
+
+        Text('这篇报道提到了 ' + String(this.cur.refs.length) + ' 次发射')
+          .fontSize(10.5)
+          .fontColor(TEXT_TIME)
+          .margin({ top: 4 })
+
+        Column() {
+          ForEach(this.cur.refs, (ref: NewsLaunchRef, idx: number) => {
+            Row() {
+              Text(String(idx + 1))
+                .width(22)
+                .fontSize(11)
+                .fontColor(TEXT_SITE)
+                .fontWeight(FontWeight.Medium)
+
+              Column() {
+                Text(this.refName(ref))
+                  .width('100%')
+                  .fontSize(13.5)
+                  .fontColor(TEXT_TITLE)
+                  .maxLines(2)
+                  .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+                Text(strOf(ref.net))
+                  .width('100%')
+                  .fontSize(10.5)
+                  .fontColor(TEXT_TIME)
+                  .margin({ top: 2 })
+                  .maxLines(1)
+                  .textOverflow({ overflow: TextOverflow.Ellipsis })
+              }
+              .alignItems(HorizontalAlign.Start)
+              .layoutWeight(1)
+              .margin({ left: 10 })
+              .clip(true)
+
+              Text('›')
+                .fontSize(17)
+                .fontColor(TEXT_SEP)
+            }
+            .width('100%')
+            .alignItems(VerticalAlign.Center)
+            .padding({ top: 11, bottom: 11, left: 10, right: 10 })
+            .borderRadius(9)
+            .backgroundColor('#0AFFFFFF')
+            .margin({ top: 7 })
+            .onClick(() => {
+              this.goRef(ref);
+            })
+          }, (ref: NewsLaunchRef) => 'ref_' + ref.id)
+        }
+        .width('100%')
+        .margin({ top: 12 })
+      }
+      .width('100%')
+      .alignItems(HorizontalAlign.Start)
+      .padding({ top: 16, bottom: 20, left: 14, right: 14 })
+      .backgroundColor(PICK_BG)
+      .borderRadius({ topLeft: 14, topRight: 14 })
+    }
+    .width('100%')
+    .height('100%')
+    // .72 黑遮罩：0.72 × 255 ≈ 184 = 0xB8
+    .backgroundColor('#B8000000')
+  }
+
+  /** 弹窗壳：grab 条 + 正文，外加可能出现的 picker 覆盖层 */
+  @Builder
+  detailSheet() {
+    Stack({ alignContent: Alignment.Bottom }) {
+      Column() {
+        this.sheetGrab()
+
+        Scroll() {
+          this.sheetBody()
+        }
+        .width('100%')
+        .layoutWeight(1)
+        .scrollBar(BarState.Off)
+        .edgeEffect(EdgeEffect.Spring)
+        .align(Alignment.Top)
+      }
+      .width('100%')
+      .height('100%')
+
+      if (this.pickOn) {
+        this.pickerLayer()
+      }
+    }
+    .width('100%')
+    .height('100%')
+    .backgroundColor(SHEET_BG)
   }
 
   // ============ build ============
@@ -451,38 +833,76 @@ export struct NewsListView {
   build() {
     Column() {
       this.topBar()
-      this.subHeader()
+      this.heroBlock()
+      this.tabsBlock()
 
-      if (this.list.length === 0) {
-        // 空列表分成三种，绝不合并（见文件头四态说明）
-        if (this.loading) {
-          this.loadingBlock()
-        } else if (this.failed) {
-          this.failedBlock()
-        } else {
-          this.emptyBlock()
-        }
+      if (this.loading && this.list.length === 0) {
+        this.loadingBlock()
+      } else if (this.visible().length === 0) {
+        this.emptyBlock()
       } else {
-        List({ scroller: this.scroller }) {
-          ForEach(this.list, (item: NewsItem) => {
+        Refresh({ refreshing: $$this.refreshing }) {
+          List({ scroller: this.scroller }) {
+            ForEach(this.visible(), (item: NewsItem) => {
+              ListItem() {
+                this.card(item)
+              }
+              .padding({ bottom: 9 })
+            }, (item: NewsItem) => 'n' + String(item.id))
+
             ListItem() {
-              this.row(item)
+              Text(this.footText())
+                .width('100%')
+                .fontSize(11)
+                .fontColor(TEXT_FOOT)
+                .textAlign(TextAlign.Center)
+                .padding({ top: 17, bottom: 5 })
             }
-            .padding({ bottom: 10 })
-          }, (item: NewsItem) => String(item.id))
+
+            ListItem() {
+              Text('资讯来自 Spaceflight News API（The Space Devs），版权归各原始媒体所有')
+                .width('100%')
+                .fontSize(10)
+                .lineHeight(15)
+                .fontColor(TEXT_SRC)
+                .textAlign(TextAlign.Center)
+                .padding({ top: 4, bottom: 10, left: 12, right: 12 })
+            }
+          }
+          .width('100%')
+          .height('100%')
+          .scrollBar(BarState.Off)
+          .edgeEffect(EdgeEffect.Spring)
+          .cachedCount(3)
+          .padding({ left: LIST_PAD, right: LIST_PAD })
+          .onReachEnd(() => {
+            this.onReachEnd();
+          })
+          .onScrollIndex((first: number) => {
+            // 滚过第一张卡（≈ 106vp，接近小程序的 120 阈值）才给标题
+            this.navSolid = first >= 1;
+          })
         }
-        .width('100%')
         .layoutWeight(1)
-        .scrollBar(BarState.Off)
-        .edgeEffect(EdgeEffect.Spring)
-        .cachedCount(3)
-        // 底部 24 而不是 92：本页在详情页栈里，底部没有悬浮胶囊让位（见文件头取舍 1）
-        .padding({ left: PAGE_PAD, right: PAGE_PAD, bottom: BOTTOM_PAD })
+        .onRefreshing(() => {
+          this.onPullRefresh();
+        })
       }
     }
     .width('100%')
     .height('100%')
     .backgroundColor(BG_PRIMARY)
     .alignItems(HorizontalAlign.Start)
+    // 弹层挂根节点：挂在卡片上会被列表重绘牵连；onDisappear 必须回写 false，
+    // 否则用户下滑关闭后 sheetOn 一直是 true，再点卡片再也打不开。
+    .bindSheet(this.sheetOn, this.detailSheet(), {
+      height: SheetSize.LARGE,
+      dragBar: true,
+      backgroundColor: SHEET_BG,
+      onDisappear: () => {
+        this.sheetOn = false;
+        this.pickOn = false;
+      }
+    })
   }
 }

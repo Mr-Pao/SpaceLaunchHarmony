@@ -10,11 +10,11 @@
  *   声明成必填会让页面拿 undefined 去 toFixed / 拼字符串，屏幕上就会出现 "undefined"。
  *   所以一律可选，消费端统一走 stNum()。
  *
- * ── 为什么 failures 只声明成 Object[]、本模块也不提供解析函数 ──
- *   这个子结构没有实测过（任务书明确说未知），猜字段名（id / net / status …）
- *   一旦猜错，运行时读到 undefined，画出来就是一行行空白卡片，比不画更糟。
- *   故这里只保留「它是一个数组」这一点，页面侧不做任何字段读取，
- *   失败信息改用同一条记录里**确定存在**的 fail / partial 计数呈现。
+ * ── failures 子结构（2026-11-03 拉线上 JSON 实测） ──
+ *   形如 { id, name, net, rocket, site, status }，status 实测只有 'Failure'，
+ *   但小程序的界面上还留了 'Partial' 分支（部分成功的记录也可能挂在这里），
+ *   所以本模块按「两种都可能」声明，消费端按 status 分流上色。
+ *   线上 70 年里只有 521 条失败记录，早期年份的 failures 为空数组。
  *
  * ArkTS 约束：只用 interface / function，不写 @Component；类型名统一加 St 前缀
  * （StatsPayload 是任务书指定的名字，四处引用已对齐），避免与其它 model 文件撞名。
@@ -49,8 +49,24 @@ export interface StYear {
   sites?: StRankItem[];
   agencies?: StRankItem[];
   orbits?: StRankItem[];
-  /** 结构未知（未实测）。刻意不在本工程内猜字段，见文件头说明 */
-  failures?: Object[];
+  /** 失败 / 部分成功的发射记录，结构见文件头（实测已确认） */
+  failures?: StFailure[];
+}
+
+/** 一条失败 / 部分成功记录（线上 COS 实测字段） */
+export interface StFailure {
+  /** LL2 launch UUID，点击进详情要用；缺失时那一行不可点 */
+  id?: string;
+  /** 任务名，形如「Long March 7A | ChinaSat 4B」 */
+  name?: string;
+  /** ISO 发射时间 */
+  net?: string;
+  /** 火箭型号（英文原名） */
+  rocket?: string;
+  /** 发射场（英文原名，含国家） */
+  site?: string;
+  /** 'Failure' 或 'Partial' */
+  status?: string;
 }
 
 /** 统计数据集载荷 */
@@ -196,21 +212,129 @@ export function stRankTop(rows: StRankItem[] | undefined, limit: number): StRank
   return out.slice(0, limit);
 }
 
+/** 国家 / 地区聚合结果一行（页面按 count 降序画条） */
+export class StCountryRow {
+  name: string = '';
+  count: number = 0;
+
+  constructor(name: string, count: number) {
+    this.name = name;
+    this.count = count;
+  }
+}
+
 /**
- * 失败记录条数。
+ * 一条「机构关键词 → 国家」规则。
  *
- * 只读「数组长度」这一个确定信息，不碰任何子字段 —— 任务书说 failures 的
- * 结构没实测过，猜字段名会画出满地 undefined。页面目前也不用这个数
- * （四格里的失败 / 部分成功来自确定的 fail / partial），留着是给将来
- * 数据侧补齐结构后的入口。
+ * 为什么用关键词数组而不是中括号正则：小程序写的是 /a|b|c/i，
+ * 语义上就是「名字里含任一关键词」，用 toLowerCase + indexOf 完全等价，
+ * 还避开了 ArkTS 里动态拼正则要处理转义的麻烦。顺序必须保留 ——
+ * 「Russian Space Forces」同时含 russian 和 space force，俄罗斯必须排在前面。
  */
-export function stFailureCount(y: StYear | null): number {
+class StCountryRule {
+  name: string = '';
+  keys: string[] = [];
+
+  constructor(name: string, keys: string[]) {
+    this.name = name;
+    this.keys = keys;
+  }
+}
+
+const COUNTRY_RULES: StCountryRule[] = [
+  new StCountryRule('俄罗斯', ['russian', 'roscosmos', 'kosmotras', 'khrunichev']),
+  new StCountryRule('中国', ['china', 'cas space', 'galactic energy', 'landspace',
+    'expace', 'orienspace', 'space pioneer', 'kuaizhou']),
+  new StCountryRule('美国', ['spacex', 'rocket lab', 'united launch', 'blue origin', 'firefly',
+    'virgin', 'astra', 'relativity', 'nasa', 'us space force']),
+  new StCountryRule('印度', ['indian space', 'isro']),
+  new StCountryRule('日本', ['japan', 'mitsubishi', 'jaxa', 'interstellar']),
+  new StCountryRule('韩国', ['korea', 'kari', 'defense development']),
+  new StCountryRule('欧洲', ['arianespace', 'european space', 'avio']),
+  new StCountryRule('德国', ['isar']),
+  new StCountryRule('以色列', ['israel', 'iai']),
+  new StCountryRule('伊朗', ['iran']),
+  new StCountryRule('新西兰', ['new zealand'])
+];
+
+/** 机构名 → 国家；匹配不上归「其他」，空名归「未知」（与小程序一致） */
+export function stCountryOf(agency: string | undefined | null): string {
+  if (agency === undefined || agency === null || agency.length === 0) {
+    return '未知';
+  }
+  const low: string = agency.toLowerCase();
+  for (let i = 0; i < COUNTRY_RULES.length; i++) {
+    const rule: StCountryRule = COUNTRY_RULES[i];
+    for (let k = 0; k < rule.keys.length; k++) {
+      if (low.indexOf(rule.keys[k]) !== -1) {
+        return rule.name;
+      }
+    }
+  }
+  return '其他';
+}
+
+/**
+ * 机构榜 → 国家聚合（最多 limit 条，按次数降序）。
+ *
+ * 国家不在 CI 侧聚合：规则是前端维护的，读机构那十来行开销可忽略，
+ * 因此与小程序同口径在客户端算。
+ */
+export function stCountries(rows: StRankItem[] | undefined, limit: number): StCountryRow[] {
+  const out: StCountryRow[] = [];
+  if (rows === undefined || rows === null || !Array.isArray(rows) || rows.length === 0) {
+    return out;
+  }
+  const sum: Map<string, number> = new Map<string, number>();
+  for (let i = 0; i < rows.length; i++) {
+    const r: StRankItem = rows[i];
+    if (r === undefined || r === null) {
+      continue;
+    }
+    const key: string = stCountryOf(r.name);
+    const prev: number | undefined = sum.get(key);
+    sum.set(key, (prev === undefined ? 0 : prev) + stNum(r.count));
+  }
+  const names: string[] = [];
+  sum.forEach((v: number, k: string) => {
+    if (v > 0) {
+      names.push(k);
+    }
+  });
+  names.sort((a: string, b: string) => {
+    const va: number | undefined = sum.get(a);
+    const vb: number | undefined = sum.get(b);
+    return (vb === undefined ? 0 : vb) - (va === undefined ? 0 : va);
+  });
+  const n: number = names.length < limit ? names.length : limit;
+  for (let i = 0; i < n; i++) {
+    const name: string = names[i];
+    const v: number | undefined = sum.get(name);
+    out.push(new StCountryRow(name, v === undefined ? 0 : v));
+  }
+  return out;
+}
+
+/** 失败 / 部分成功记录（原样返回，字段见 StFailure）；页面自己判 null */
+export function stFailures(y: StYear | null): StFailure[] {
+  const out: StFailure[] = [];
   if (y === null) {
-    return 0;
+    return out;
   }
-  const raw: Object[] | undefined = y.failures;
+  const raw: StFailure[] | undefined = y.failures;
   if (raw === undefined || raw === null || !Array.isArray(raw)) {
-    return 0;
+    return out;
   }
-  return raw.length;
+  for (let i = 0; i < raw.length; i++) {
+    const f: StFailure = raw[i];
+    if (f !== undefined && f !== null) {
+      out.push(f);
+    }
+  }
+  return out;
+}
+
+/** 失败记录条数（不做任何字段读取，纯长度） */
+export function stFailureCount(y: StYear | null): number {
+  return stFailures(y).length;
 }

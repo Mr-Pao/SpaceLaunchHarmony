@@ -28,6 +28,18 @@ const PREF_NAME: string = 'spacelaunch_prefs';
 const KEY_FAV: string = 'sl_favorites_v1';
 
 /**
+ * 「我的提醒」的键名，与小程序 mine.vue 的 REMIND_KEY 完全一致。
+ *
+ * ⚠ 鸿蒙侧**目前没有任何写入方**（发射详情页只有 ☆ 收藏，没有「提醒」按钮），
+ * 所以这里读出来必然是空数组。仍然按同名 key 只读接上，是因为：
+ *   1) 将来详情页补上提醒开关时，不用再改数据层，清单会自己活过来；
+ *   2) 绝不另造一个 key —— 那会让两端口径永久分叉；
+ *   3) 绝不塞假数据 —— 界面上凭空冒出几条「提醒」比空白更糟。
+ * 结构是小程序那套：一个 id 字符串数组。
+ */
+const KEY_REMIND: string = 'reminded_launches';
+
+/**
  * 版本号常量：每次收藏变化都 +1 写进 AppStorage。
  *
  * 为什么用 AppStorage 而不是让页面自己刷新：收藏可能在任何页面被改
@@ -273,6 +285,40 @@ export class FavStore {
     return this.cache.length;
   }
 
+  /**
+   * 「我的提醒」的 id 列表（只读）。
+   *
+   * 只读是刻意的：鸿蒙侧还没有提醒开关，任何写入都是无源之水。等详情页接上
+   * 提醒按钮时，在外层加一个 toggleRemind() 即可，读路径不用再动。
+   * 解析失败 / 非数组 / 空串一律返回空数组，不抛 —— 这一格是装饰性的，
+   * 一份坏数据不该把「我的」整页搞白。
+   */
+  remindedList(): string[] {
+    const p: preferences.Preferences | null = this.prefs;
+    if (p === null) {
+      return [];
+    }
+    try {
+      const raw: preferences.ValueType = p.getSync(KEY_REMIND, '');
+      if (typeof raw !== 'string' || raw.length === 0) {
+        return [];
+      }
+      // JSON.parse 必须 as：ArkTS 不接受隐式 any
+      const arr: string[] = JSON.parse(raw) as string[];
+      const out: string[] = [];
+      for (let i = 0; i < arr.length; i++) {
+        const id: string = typeof arr[i] === 'string' ? arr[i].trim() : '';
+        if (id.length > 0) {
+          out.push(id);
+        }
+      }
+      return out;
+    } catch (e) {
+      hilog.warn(DOMAIN, TAG, '提醒数据解析失败，按空列表处理');
+      return [];
+    }
+  }
+
   /** 清空（给「清理缓存」之类入口备用，故意不暴露在 UI 上）。 */
   clear(): void {
     this.cache = [];
@@ -314,4 +360,12 @@ export function favToggle(item: FavItem): boolean {
 
 export function favCount(): number {
   return favorites.count();
+}
+
+/**
+ * 「我的提醒」的 id 列表（只读）。
+ * 见 FavStore.remindedList 的注释：鸿蒙侧暂无写入方，返回空数组是正常结果。
+ */
+export function remindedList(): string[] {
+  return favorites.remindedList();
 }

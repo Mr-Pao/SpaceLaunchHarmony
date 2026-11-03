@@ -1,83 +1,125 @@
 /**
  * view/ExpeditionView.ets —— 远征队详情页（对位小程序 pages/expedition/expedition.vue，333 行）
  *
- * ── 契约 ──
+ * ── 契约（不能改，路由容器按这个装配）──
  *   @Component export struct ExpeditionView { @Prop expeditionId: string = ''; }
- *   三个回调由父级（路由容器）注入，本页不直接跳转：
+ *   三个回调由父级（DetailPages.ets）注入：
  *     onOpenStation(id: string, name: string)
  *     onOpenPhoto(url: string, title: string)
  *     onOpenAstronaut(id: string, name: string)
  *
- * ── 数据来源 expeditions.json（2026-11-03 实测 v=14 / count=165）──
+ * ── 数据来源 expeditions.json（实测 count=165）──
  *   id / name / start / end / stationId / stationName / patches[] / crew[]
- *   · end 为空串的 3 条 = 正在进行（页面据此出绿色「进行中」chip）
+ *   · end 为空串的 3 条 = 正在进行（页面据此出 #38bdf8 的「进行中」chip）
  *   · patches 是**任务徽章**（1:1 小图），118/165 非空
  *   · crew 每条 {id,name,role,agency,img}，img 实测多为空串 → 画 emoji 占位
  *
- * ── 为什么本文件自带 Exp* 类型、不建 model 文件 ──
- *   expeditions 目前只被这一页消费，为「用过一次」的结构单开 model 文件会让
- *   model/ 目录长成收容所。做法与 RocketDetailView 的 Rk* 一致；前缀 Exp 是为了
- *   避开 ArkTS 的声明合并（同名 interface 跨文件合并会静默改字段类型）。
+ * ── 本次 1:1 对齐改了什么（C 组 15 条）──
+ *   1. head 去掉卡片化：小程序 `.head` 是**透明底**，只有左右 32rpx 内边距，
+ *      顶部靠 `padding-top = statusBar + 52px` 让出状态栏。旧版套了一层 #141A26 卡片，
+ *      首屏看起来像「标题卡」而不是小程序那种标题直接浮在页面底色上。
+ *      鸿蒙侧本页顶部有常驻 48vp 的返回栏（在文档流里，天然让出了状态栏高度），
+ *      所以 head 只需紧贴其下，不再重复留白。
+ *   2. 名称 22vp → 18vp / 字色 #e2e8f0 / w700 / line-height 1.3，行数上限 2。
+ *   3. 英文名 11.5vp #A7B4C7 → 11vp #6b7891 + letter-spacing 0.25。
+ *   4. 起止文案 `start → end` → `start — end`（em dash），结束缺省由「进行中」改「至今」。
+ *   5. 状态 chip 由「#34C759 实底 + 深色字」改为小程序的半透明底 + 同色字；
+ *      **三页统一这套**，不再有绿实底。
+ *   6. 空间站行从「嵌在卡片里的一条带顶部边框的行」改成**独立胶囊**：
+ *      自己的 #141a26 底、7vp 圆角、8/10vp 内边距，名称 #38bdf8 13vp。
+ *   7. 空间站空值 `—` → `未知`。
+ *   8. 徽章 80vp/radius 8 → 70vp/radius 6，间距 10vp。
+ *   9. 卡片标题 17vp Bold 白 → 12vp #94a3b8（两个卡都是）。
+ *  10. 乘组 0 人时不补任何提示（删掉旧版的「暂无乘组信息」），标题照常写 `乘组（0 人）`。
+ *  11. 乘组行 `{role} · {agency}` **原样英文**（Commander / NASA），不再翻中文；
+ *      字号 13.5 / 10.5。
+ *  12. 头像 48vp → 40vp，占位 emoji 22vp → 18vp。
+ *  13. 卡片 radius 12→10、内边距 14→13/14、补 1rpx 描边 rgba(255,255,255,.05)。
+ *  14. 页脚 11vp/#55617A/margin 18 → 10vp/#3d4a5c/margin 24。
+ *  15. 三态改纯文字 `加载中...` / `未找到该远征队`（小程序只有一行 .hint-text，
+ *      没有 spinner、没有图标、没有返回按钮）。
  *
  * ── 有意差异（不是漏做）──
- *   1. 头部不铺大图：expeditions 没有 hero 字段，patches 是 1:1 徽章，
- *      拉成 200vp 通栏只会糊成一片色块，所以按任务书做成「纯文字卡 + 徽章横排」。
- *   2. 徽章 404 当场摘除：COS 上仍有失效链接，留一块 80×80 破图比少一个徽章难看。
- *   3. failed（网络挂）与 notFound（id 匹配不到）是两个独立状态，绝不合并 ——
- *      合并后用户看到「加载失败」，而真相是这个 id 根本不存在。
- *   4. 乘组名不做中文专名表：crew 里没有 nation 字段，utils/Format 的
- *      astroName(raw, nation) 第二档（中国籍专名表）用不上；硬猜国籍比显示原名更糟。
- *      因此这里保留原名，仅对空的 name 兜底「未知乘员」。
+ *   · 顶部返回栏常驻：小程序 nav-bar 是 fixed、滚 120 才出标题，鸿蒙这边沿用工程既有的
+ *     48vp 自绘返回栏（不滚动），否则 NavDestination 里没有返回入口。
+ *   · 徽章 404 当场摘除：COS 上仍有失效链接，留一个 70×70 破图比少一个徽章难看。
+ *   · failed（网络挂）与 notFound（id 匹配不到）保持两个独立状态 —— 合并后用户看到
+ *     「加载失败」，而真相是这个 id 根本不存在。
+ *   · 乘组名不套中文专名表：crew 里没有 nation 字段，utils/Format 的
+ *     astroName(raw, nation) 第二档用不上；硬猜国籍比显示原名更糟。
  *
- * 数据链路（与 AstronautView 同口径）：
- *   repo.peek<ExpPayload>('expeditions')  —— 同步、零网络，冷启动立刻上屏
- *   repo.load<ExpPayload>('expeditions', {onUpdate})  —— 后台刷新，onUpdate 回填
- *   .catch 里**只置 failed**，绝不置 found —— 否则弱网无缓存会变成「未找到」。
+ * 数据链路：
+ *   repo.peek<ExpPayload>('expeditions')   —— 同步、零网络，冷启动立刻上屏
+ *   repo.load<ExpPayload>('expeditions', { onUpdate }) —— 后台刷新
+ *   .catch 里只置 failed，**绝不置 found** —— 否则弱网无缓存会变成「未找到」。
  *
- * ⚠ 本文件不使用 console.*，日志一律 hilog。
+ * ⚠ 本文件不使用 console.*，日志一律 hilog；无定时器。
  */
 
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { repo, LoadOptions } from '../data/Repository';
 import { BasePayload } from '../model/Common';
-import { strOf, dayOf, expeditionName, stationName, astroName, agencyLabel } from '../utils/Format';
+import { strOf, dayOf, expeditionName } from '../utils/Format';
 import { Nav } from '../routes/Nav';
 
 const DOMAIN: number = 0x0000;
 const TAG: string = 'ExpeditionView';
 
-// ============ 视觉常量（工程约定） ============
+// ============ 视觉常量（全部按 rpx ÷ 2 折算） ============
 
 const BG: string = '#0A0E17';
 const CARD: string = '#141A26';
 const TEXT_MAIN: string = '#FFFFFF';
-const TEXT_SUB: string = '#A7B4C7';
-const TEXT_DIM: string = '#55617A';
+/** 名称 / 乘员名：小程序 #e2e8f0 */
+const TEXT_NAME: string = '#E2E8F0';
+/** 起止日期：小程序 #c6cfdd */
+const TEXT_BODY: string = '#C6CFDD';
+/** 次级灰：英文名 / 空间站标签 / 乘员副行 = 小程序 #6b7891 */
+const TEXT_DIM: string = '#6B7891';
+/** 卡片标题：小程序 #94a3b8 */
+const TITLE_COLOR: string = '#94A3B8';
+/** 箭头 / 页脚：小程序 #3d4a5c */
+const TEXT_FAINT: string = '#3D4A5C';
 const ACCENT: string = '#38BDF8';
-/** 进行中用成功绿；已结束压成三级灰，不抢视线 */
-const ACTIVE_GREEN: string = '#34C759';
-const ENDED_GRAY: string = '#55617A';
-/** 头像 / 徽章占位底色：比卡片再深一档，空图才不至于和卡片糊成一片 */
-const PLACEHOLDER_BG: string = '#1B2330';
 
-const CARD_RADIUS: number = 12;
-const CARD_PAD: number = 14;
-/** 区块间距 15vp（工程约定） */
-const BLOCK_GAP: number = 15;
-/** 页面左右内边距 12（与 TodayView / EventsView 对齐） */
-const PAGE_PAD: number = 12;
-/** 二级页底部留白统一 32，只够滑到底时最后一行不贴边 */
+/** 进行中 chip：底 rgba(56,189,248,.16) → alpha 0x29、字 #38bdf8 */
+const CHIP_ON_BG: string = '#2938BDF8';
+const CHIP_ON_FG: string = '#38BDF8';
+/** 已结束 chip：底 rgba(255,255,255,.05) → alpha 0x0D、字 #55617a */
+const CHIP_OFF_BG: string = '#0DFFFFFF';
+const CHIP_OFF_FG: string = '#55617A';
+
+/** 卡片描边 1rpx rgba(255,255,255,.05) */
+const CARD_BORDER: string = '#0DFFFFFF';
+/** 卡片圆角 20rpx = 10vp；内边距 26rpx 28rpx = 13/14vp */
+const CARD_RADIUS: number = 10;
+const CARD_PAD_V: number = 13;
+const CARD_PAD_H: number = 14;
+/** 卡片上间距 24rpx = 12vp */
+const CARD_GAP: number = 12;
+/** 页面左右 32rpx = 16vp（卡片和 head 同一口径） */
+const PAGE_PAD: number = 16;
+/** 二级页底部留白 32 */
 const BOTTOM_PAD: number = 32;
 
-const PATCH_SIZE: number = 80;
-const AVATAR_SIZE: number = 48;
-/** 乘组头像占位：没有 img 时用 emoji，而不是再引一份图片资源 */
+/** 徽章 140rpx = 70vp、圆角 12rpx = 6vp、间距 20rpx = 10vp */
+const PATCH_SIZE: number = 70;
+const PATCH_RADIUS: number = 6;
+const PATCH_GAP: number = 10;
+
+/** 乘员头像 80rpx = 40vp，占位 emoji 36rpx = 18vp */
+const AVATAR_SIZE: number = 40;
 const CREW_AVATAR_EMOJI: string = '🧑‍🚀';
+const CREW_AVATAR_EMOJI_SIZE: number = 18;
+
+/** 乘组角色原样英文（小程序不翻译），副行 21rpx = 10.5vp */
+const CREW_NAME_SIZE: number = 13.5;
+const CREW_SUB_SIZE: number = 10.5;
 
 // ============ 类型（expeditions.json 实测结构） ============
 
-/** 乘组一名成员。字段全部可选：上游对个别乘员的 img / agency 缺失很常见 */
+/** 乘组一名成员。字段全可选：上游对个别乘员的 img / agency 缺失很常见 */
 export interface ExpCrew {
   id?: number;
   name?: string;
@@ -120,37 +162,38 @@ export interface ExpPayload extends BasePayload {
   list: ExpItem[];
 }
 
-// ============ 纯函数（放在组件外，避免每次重绘重建闭包） ============
-
 /**
- * 乘组角色中文化。
+ * 徽章渲染项。
  *
- * 只翻实测出现过的四个值，其余**原样保留**：编一个中文名会让懂行的人以为数据错了，
- * 而 "Spaceflight Participant" 这类角色本来就没有公认中文简称。
+ * 为什么不直接 ForEach 一个 string[]：ForEach 的第三个参数（key 生成函数）拿不到
+ * 稳定的原始下标语义，重复 URL 会撞 key；包一层带上原始下标，key 就唯一且稳定。
+ * 前缀 Ex2 用于避开本工程已有的 Exp/Ev/Ne/Gl/Rt/Mn/Se/Vd/Pd/Ag 等前缀。
  */
-function crewRoleZh(raw: string): string {
-  const s: string = strOf(raw).trim();
-  if (s.length === 0) {
-    return '';
+class Ex2Patch {
+  url: string = '';
+  index: number = 0;
+
+  constructor(url: string, index: number) {
+    this.url = url;
+    this.index = index;
   }
-  if (s === 'Commander') {
-    return '指令长';
-  }
-  if (s === 'Flight Engineer') {
-    return '飞行工程师';
-  }
-  if (s === 'Mission Specialist') {
-    return '任务专家';
-  }
-  if (s === 'Pilot') {
-    return '驾驶员';
-  }
-  return s;
 }
+
+// ============ 纯函数（放组件外，避免每次重绘重建闭包） ============
 
 /** 空片段用 · 连接：避免出现 " · NASA" 这种残缺分隔符 */
 function joinParts(parts: string[]): string {
   return parts.join(' · ');
+}
+
+/** 日期展示：dayOf 用正则按原串截取、不构造 Date，避免东八区差一天 */
+function ex2Day(v: string): string {
+  const raw: string = strOf(v).trim();
+  if (raw.length === 0) {
+    return '';
+  }
+  const d: string = dayOf(raw);
+  return d.length > 0 ? d : raw;
 }
 
 @Component
@@ -239,15 +282,15 @@ export struct ExpeditionView {
         this.applyPayload(data);
         this.loading = false;
         this.failed = false;
+        this.loadingNow = false;
       })
       .catch((e: BusinessError) => {
         this.loading = false;
         // 已经有内容就别喊失败，静默留在旧数据上（弱网体验优先）
         this.failed = !this.found;
-        hilog.warn(DOMAIN, TAG, 'expeditions 加载失败: %{public}s', e.message);
-      })
-      .then(() => {
+        // 防重入标记必须在这条分支也清掉，否则一次网络抖动会让「重试」永久失效
         this.loadingNow = false;
+        hilog.warn(DOMAIN, TAG, 'expeditions 加载失败: %{public}s', e.message);
       });
   }
 
@@ -292,9 +335,9 @@ export struct ExpeditionView {
     // 中文名没换字（例如上游给了个不叫 Expedition N 的名字）就别把同一行字再画一遍
     this.expNameEn = zh !== rawName ? rawName : '';
 
-    this.expStart = dayOf(strOf(e.start));
+    this.expStart = ex2Day(strOf(e.start));
     // 空串 end = 进行中；dayOf('') 也返回空串，两种情形天然同码
-    this.expEnd = dayOf(strOf(e.end));
+    this.expEnd = ex2Day(strOf(e.end));
 
     const sid: number | undefined = e.stationId;
     this.expStationId = sid !== undefined ? sid : 0;
@@ -319,50 +362,64 @@ export struct ExpeditionView {
     return this.expEnd.length === 0;
   }
 
+  /** 文案取小程序的原话：进行中 / 已结束 */
   private statusText(): string {
     return this.ongoing() ? '进行中' : '已结束';
   }
 
+  /** chip 底色：进行中半透明蓝、已结束极淡白（**不再用绿实底**） */
   private statusBg(): string {
-    return this.ongoing() ? ACTIVE_GREEN : ENDED_GRAY;
+    return this.ongoing() ? CHIP_ON_BG : CHIP_OFF_BG;
   }
 
-  /** 绿底配深色字、灰底配白字（与 AstronautView 的在轨/退役同口径） */
   private statusFg(): string {
-    return this.ongoing() ? BG : TEXT_MAIN;
+    return this.ongoing() ? CHIP_ON_FG : CHIP_OFF_FG;
   }
 
-  /** 时间行：起始 → 结束 / 进行中 */
+  /**
+   * 起止行：`{start} — {end || '至今'}`。
+   *
+   * 分隔符是 em dash（—）不是箭头、缺省是「至今」不是「进行中」——
+   * 两条都是小程序原文，改了就在文案库里对不上。
+   * 起始缺失时小程序也不补占位（dayOf('') 就是空串），这里同样不补。
+   */
   private rangeText(): string {
-    const head: string = this.expStart.length > 0 ? this.expStart : '时间待定';
-    return head + ' → ' + (this.expEnd.length > 0 ? this.expEnd : '进行中');
+    const head: string = this.expStart;
+    const tail: string = this.expEnd.length > 0 ? this.expEnd : '至今';
+    return head + ' — ' + tail;
   }
 
-  /** 徽章列表（去掉加载失败的） */
-  private patchList(): string[] {
-    const out: string[] = [];
+  /** 徽章列表（去掉空串与加载失败的链接），带原始下标供 ForEach 做 key */
+  private patchList(): Ex2Patch[] {
+    const out: Ex2Patch[] = [];
     for (let i = 0; i < this.expPatches.length; i++) {
       const url: string = strOf(this.expPatches[i]).trim();
       if (url.length > 0 && this.brokenPatches.indexOf(url) < 0) {
-        out.push(url);
+        out.push(new Ex2Patch(url, i));
       }
     }
     return out;
   }
 
+  /** 乘员名：小程序直接显示 `{{ m.name }}`，这里同样不做中文专名表 */
   private crewName(c: ExpCrew): string {
-    const n: string = astroName(strOf(c.name), '').trim();
+    const n: string = strOf(c.name).trim();
     return n.length > 0 ? n : '未知乘员';
   }
 
-  /** 副行：角色中文 · 机构中文。任一段取不到就跳过，不留残缺分隔符 */
+  /**
+   * 副行：`{role} · {agency}`，**原样英文**。
+   *
+   * 旧版走 crewRoleZh + agencyLabel 翻成「指令长 · 美国宇航局」，
+   * 与小程序显示的 Commander · NASA 不一致；小程序是英文原样输出的。
+   */
   private crewMeta(c: ExpCrew): string {
     const parts: string[] = [];
-    const role: string = crewRoleZh(strOf(c.role));
+    const role: string = strOf(c.role).trim();
     if (role.length > 0) {
       parts.push(role);
     }
-    const agency: string = agencyLabel(strOf(c.agency)).trim();
+    const agency: string = strOf(c.agency).trim();
     if (agency.length > 0) {
       parts.push(agency);
     }
@@ -378,6 +435,11 @@ export struct ExpeditionView {
     return id !== undefined && this.brokenAvatars.indexOf(id) >= 0;
   }
 
+  /** 空间站名：小程序 `{{ exp.stationName || '未知' }}`（不查中文表） */
+  private stationText(): string {
+    return this.expStationName.length > 0 ? this.expStationName : '未知';
+  }
+
   private retry(): void {
     this.loadExpedition(true);
   }
@@ -386,6 +448,11 @@ export struct ExpeditionView {
 
   private openStation(): void {
     this.onOpenStation(String(this.expStationId), this.expStationName);
+  }
+
+  private openPatch(url: string): void {
+    // 徽章走工程唯一的看图器，不另做灯箱
+    this.onOpenPhoto(url, '任务徽章');
   }
 
   private openAstronaut(c: ExpCrew): void {
@@ -399,13 +466,20 @@ export struct ExpeditionView {
 
   // ============ UI：顶栏（不滚动） ============
 
+  /**
+   * 自绘返回栏。
+   *
+   * 小程序 nav-bar 是 fixed 浮动、滚 120 才浮出标题；鸿蒙侧 NavDestination 没有系统
+   * header（DetailPages 里 hideTitleBar(true)），必须常驻一条返回栏，否则进得去出不来。
+   * 高度 48 也让下面的 head 天然避开状态栏区域。
+   */
   @Builder
   topBar() {
     Row() {
       Row() {
         Text('‹ 返回')
           .fontSize(15)
-          .fontColor(TEXT_SUB)
+          .fontColor(TEXT_DIM)
           .onClick(() => {
             Nav.pop();
           })
@@ -414,8 +488,8 @@ export struct ExpeditionView {
       .padding({ right: 12, top: 10, bottom: 10 })
 
       Text(this.found ? this.expName : '远征队')
-        .fontSize(19)
-        .fontWeight(FontWeight.Bold)
+        .fontSize(17)
+        .fontWeight(FontWeight.Medium)
         .fontColor(TEXT_MAIN)
         .maxLines(1)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -426,23 +500,32 @@ export struct ExpeditionView {
     .alignItems(VerticalAlign.Center)
   }
 
-  // ============ UI：头部块（纯文字，无大图） ============
+  // ============ UI：头部块（**非卡片**，透明底） ============
 
+  /**
+   * 头部：透明底 + 左右 16vp + 底部 4vp。
+   *
+   * 对位 `.head{padding:0 32rpx 8rpx}` —— 只有内边距，**没有背景、没有圆角、没有描边**。
+   * 旧版把它包成 #141A26 卡片，等于给标题加了一个小程序没有的容器。
+   */
   @Builder
-  headCard() {
+  headBlock() {
     Column() {
       Text(this.expName)
-        .fontSize(22)
+        .fontSize(18)
         .fontWeight(FontWeight.Bold)
-        .fontColor(TEXT_MAIN)
+        // line-height 1.3 × 18 ≈ 23vp
+        .lineHeight(23)
+        .fontColor(TEXT_NAME)
         .width('100%')
         .maxLines(2)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
 
       if (this.expNameEn.length > 0) {
         Text(this.expNameEn)
-          .fontSize(11.5)
-          .fontColor(TEXT_SUB)
+          .fontSize(11)
+          .fontColor(TEXT_DIM)
+          .letterSpacing(0.25)
           .width('100%')
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -451,49 +534,53 @@ export struct ExpeditionView {
 
       Row() {
         Text(this.rangeText())
-          .fontSize(12.5)
-          .fontColor(TEXT_SUB)
-          .layoutWeight(1)
+          .fontSize(12)
+          .fontColor(TEXT_BODY)
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .layoutWeight(1)
 
         Text(this.statusText())
-          .fontSize(10.5)
-          .fontWeight(FontWeight.Bold)
+          .fontSize(9.5)
           .fontColor(this.statusFg())
           .backgroundColor(this.statusBg())
-          .padding({ left: 8, right: 8, top: 3, bottom: 3 })
-          .borderRadius(6)
+          // 3rpx 12rpx = 1.5/6vp、radius 6rpx = 3vp
+          .padding({ left: 6, right: 6, top: 1.5, bottom: 1.5 })
+          .borderRadius(3)
           .margin({ left: 8 })
+          .maxLines(1)
       }
       .width('100%')
       .alignItems(VerticalAlign.Center)
-      .margin({ top: 12 })
+      .margin({ top: 6 })
 
-      // stationId 为 0 / 缺失 = 这条远征队没挂空间站（早期数据存在），整行不画
-      if (this.expStationId !== 0) {
+      // 空间站胶囊：独立一块 #141a26，不是卡片里的一条带边框的行
+      if (this.expStationId > 0) {
         Row() {
           Text('空间站')
-            .fontSize(12)
+            .fontSize(11)
             .fontColor(TEXT_DIM)
 
-          Text(this.expStationName.length > 0 ? stationName(this.expStationName) : '—')
-            .fontSize(13.5)
-            .fontColor(TEXT_MAIN)
+          Text(this.stationText())
+            .fontSize(13)
+            .fontColor(ACCENT)
             .maxLines(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
             .layoutWeight(1)
-            .margin({ left: 10 })
+            .margin({ left: 6 })
 
           Text('›')
-            .fontSize(16)
-            .fontColor(TEXT_DIM)
+            .fontSize(15)
+            .fontColor(TEXT_FAINT)
         }
         .width('100%')
         .alignItems(VerticalAlign.Center)
-        .padding({ top: 11 })
-        .margin({ top: 11 })
-        .border({ width: { top: 1 }, color: '#1E2736' })
+        // 16rpx 20rpx = 8/10vp、radius 14rpx = 7vp
+        .padding({ left: 10, right: 10, top: 8, bottom: 8 })
+        .backgroundColor(CARD)
+        .borderRadius(7)
+        .border({ width: 0.5, color: CARD_BORDER })
+        .margin({ top: 9 })
         .onClick(() => {
           this.openStation();
         })
@@ -501,55 +588,67 @@ export struct ExpeditionView {
     }
     .width('100%')
     .alignItems(HorizontalAlign.Start)
-    .padding(CARD_PAD)
-    .backgroundColor(CARD)
-    .borderRadius(CARD_RADIUS)
+    .padding({ left: PAGE_PAD, right: PAGE_PAD, bottom: 4 })
   }
 
-  // ============ UI：任务徽章卡 ============
+  // ============ UI：任务徽章 ============
+
+  @Builder
+  patchItem(item: Ex2Patch) {
+    Image(item.url)
+      .width(PATCH_SIZE)
+      .height(PATCH_SIZE)
+      .borderRadius(PATCH_RADIUS)
+      // 小程序 .patch 背景是页面底色，徽章留白才不显得浮
+      .backgroundColor(BG)
+      .objectFit(ImageFit.Contain)
+      .onError(() => {
+        // 失效链接当场摘掉，不留一块 70×70 的破图
+        if (this.brokenPatches.indexOf(item.url) < 0) {
+          this.brokenPatches = this.brokenPatches.concat([item.url]);
+        }
+      })
+      .onClick(() => {
+        this.openPatch(item.url);
+      })
+  }
 
   @Builder
   patchCard() {
     Column() {
       Text('任务徽章')
-        .fontSize(17)
-        .fontWeight(FontWeight.Bold)
-        .fontColor(TEXT_MAIN)
+        .fontSize(12)
+        .fontColor(TITLE_COLOR)
         .width('100%')
+        .margin({ bottom: 7 })
 
-      // Row 没有 flexWrap，折行必须用 Flex + FlexWrap.Wrap
-      Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.Start }) {
-        ForEach(this.patchList(), (url: string) => {
-          Image(url)
-            .width(PATCH_SIZE)
-            .height(PATCH_SIZE)
-            .objectFit(ImageFit.Contain)
-            .backgroundColor(PLACEHOLDER_BG)
-            .borderRadius(8)
-            .margin({ right: 10, top: 10, bottom: 2 })
-            .onError(() => {
-              // 破图当场从列表里摘掉，不留 80×80 的空白方格
-              this.brokenPatches = this.brokenPatches.concat([url]);
-            })
-            .onClick(() => {
-              this.onOpenPhoto(url, '任务徽章');
-            })
-        }, (url: string) => url)
+      // Row 没有 flexWrap，折行必须 Flex + FlexWrap.Wrap；gap 20rpx = 10vp
+      Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.Start, alignItems: ItemAlign.Center }) {
+        ForEach(this.patchList(), (item: Ex2Patch) => {
+          Column() {
+            this.patchItem(item)
+          }
+          .margin({ right: PATCH_GAP, bottom: PATCH_GAP })
+        // key 带上断链表长度：onError 只改 @State 数组，
+        // @Builder 按值传参不建立响应式依赖，靠 key 变化强制重算
+        }, (item: Ex2Patch) => String(item.index) + '|' + item.url + '#' + String(this.brokenPatches.length))
       }
       .width('100%')
     }
     .width('100%')
     .alignItems(HorizontalAlign.Start)
-    .padding(CARD_PAD)
+    // 底部内边距扣掉每个徽章自带的 10vp 下边距，视觉上仍是 13vp 的下留白
+    .padding({ left: CARD_PAD_H, right: CARD_PAD_H, top: CARD_PAD_V, bottom: CARD_PAD_V - PATCH_GAP })
     .backgroundColor(CARD)
     .borderRadius(CARD_RADIUS)
-    .margin({ top: BLOCK_GAP })
+    .border({ width: 0.5, color: CARD_BORDER })
+    .margin({ top: CARD_GAP })
   }
 
-  // ============ UI：乘组卡 ============
+  // ============ UI：乘组 ============
 
   @Builder
-  crewRow(c: ExpCrew) {
+  crewRow(c: ExpCrew, isLast: boolean) {
     Row() {
       if (this.avatarUrl(c).length > 0 && !this.avatarBroken(c)) {
         Image(this.avatarUrl(c))
@@ -557,7 +656,8 @@ export struct ExpeditionView {
           .height(AVATAR_SIZE)
           .borderRadius(AVATAR_SIZE / 2)
           .objectFit(ImageFit.Cover)
-          .backgroundColor(PLACEHOLDER_BG)
+          // 小程序 .avatar 背景是页面底色 #0a0e17
+          .backgroundColor(BG)
           .onError(() => {
             const id: number | undefined = c.id;
             if (id !== undefined) {
@@ -567,79 +667,82 @@ export struct ExpeditionView {
       } else {
         Column() {
           Text(CREW_AVATAR_EMOJI)
-            .fontSize(22)
+            .fontSize(CREW_AVATAR_EMOJI_SIZE)
         }
         .width(AVATAR_SIZE)
         .height(AVATAR_SIZE)
         .borderRadius(AVATAR_SIZE / 2)
-        .backgroundColor(PLACEHOLDER_BG)
+        .backgroundColor(BG)
         .justifyContent(FlexAlign.Center)
         .alignItems(HorizontalAlign.Center)
       }
 
       Column() {
         Text(this.crewName(c))
-          .fontSize(15)
-          .fontColor(TEXT_MAIN)
+          .fontSize(CREW_NAME_SIZE)
+          .fontColor(TEXT_NAME)
           .width('100%')
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
 
         if (this.crewMeta(c).length > 0) {
           Text(this.crewMeta(c))
-            .fontSize(11.5)
-            .fontColor(TEXT_SUB)
+            .fontSize(CREW_SUB_SIZE)
+            .fontColor(TEXT_DIM)
             .width('100%')
             .maxLines(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
-            .margin({ top: 4 })
+            // 4rpx = 2vp
+            .margin({ top: 2 })
         }
       }
       .alignItems(HorizontalAlign.Start)
       .layoutWeight(1)
-      .margin({ left: 12 })
+      // 20rpx = 10vp
+      .margin({ left: 10 })
 
       Text('›')
-        .fontSize(16)
-        .fontColor(TEXT_DIM)
+        .fontSize(15)
+        .fontColor(TEXT_FAINT)
     }
     .width('100%')
     .alignItems(VerticalAlign.Center)
-    .padding({ top: 9, bottom: 9 })
+    // 14rpx 0 = 上下各 7vp
+    .padding({ top: 7, bottom: 7 })
+    // 行分隔线 rgba(255,255,255,.04)；最后一行不画
+    .border({ width: { bottom: isLast ? 0 : 0.5 }, color: '#0AFFFFFF' })
     .onClick(() => {
       this.openAstronaut(c);
     })
   }
 
+  /**
+   * 乘组卡：**总是渲染**。
+   *
+   * 小程序是 `<view class="card">`（没有 v-if），0 人时标题仍写「乘组（0 人）」，
+   * 下面一片空白、不给任何提示文案。旧版补了「暂无乘组信息」，属于多余。
+   */
   @Builder
   crewCard() {
     Column() {
-      Text('乘组（' + this.expCrew.length + ' 人）')
-        .fontSize(17)
-        .fontWeight(FontWeight.Bold)
-        .fontColor(TEXT_MAIN)
+      Text('乘组（' + String(this.expCrew.length) + ' 人）')
+        .fontSize(12)
+        .fontColor(TITLE_COLOR)
         .width('100%')
-        .margin({ bottom: 4 })
+        .margin({ bottom: 7 })
 
-      if (this.expCrew.length === 0) {
-        // 有乘组字段但为空：这是数据缺，不是「没人」—— 直说，别留一片空白
-        Text('暂无乘组信息')
-          .fontSize(12)
-          .fontColor(TEXT_DIM)
-          .width('100%')
-          .margin({ top: 8 })
-      } else {
-        ForEach(this.expCrew, (c: ExpCrew) => {
-          this.crewRow(c)
-        }, (c: ExpCrew) => String(c.id !== undefined ? c.id : c.name))
-      }
+      ForEach(this.expCrew, (c: ExpCrew, index: number) => {
+        this.crewRow(c, index === this.expCrew.length - 1)
+      // key 带断头表长度：头像 onError 只改 @State，靠 key 变化重算占位分支
+      }, (c: ExpCrew, index: number) => String(index) + '|' + String(c.id) + '#' + String(this.brokenAvatars.length))
     }
     .width('100%')
     .alignItems(HorizontalAlign.Start)
-    .padding(CARD_PAD)
+    .padding({ left: CARD_PAD_H, right: CARD_PAD_H, top: CARD_PAD_V, bottom: CARD_PAD_V })
     .backgroundColor(CARD)
     .borderRadius(CARD_RADIUS)
-    .margin({ top: BLOCK_GAP })
+    .border({ width: 0.5, color: CARD_BORDER })
+    .margin({ top: CARD_GAP })
   }
 
   // ============ UI：页脚 ============
@@ -647,96 +750,40 @@ export struct ExpeditionView {
   @Builder
   footerHint() {
     Text('数据来源 The Space Devs')
-      .fontSize(11)
-      .fontColor(TEXT_DIM)
+      .fontSize(10)
+      .fontColor(TEXT_FAINT)
       .width('100%')
       .textAlign(TextAlign.Center)
-      .margin({ top: 18 })
+      // 48rpx = 24vp
+      .margin({ top: 24, bottom: 6 })
   }
 
-  // ============ UI：三态 ============
+  // ============ UI：三态（纯文字） ============
 
+  /**
+   * 三态：小程序只有一行 `.hint-text`（13vp #6b7891，padding 200rpx 40rpx）。
+   * 没有 spinner、没有 emoji、没有「返回」按钮 —— 返回键在顶栏里。
+   * 网络失败与「id 不存在」共用同一句文案，但失败态整块可点 = 重试（隐形热区）。
+   */
   @Builder
-  loadingBlock() {
+  hintBlock(text: string, tappable: boolean) {
     Column() {
-      LoadingProgress()
-        .width(36)
-        .height(36)
-        .color(ACCENT)
-      Text('正在加载远征队…')
-        .fontSize(12)
-        .fontColor(TEXT_DIM)
-        .margin({ top: 10 })
-    }
-    .width('100%')
-    .layoutWeight(1)
-    .justifyContent(FlexAlign.Center)
-    .alignItems(HorizontalAlign.Center)
-  }
-
-  @Builder
-  failedBlock() {
-    Column() {
-      Text('远征队数据加载失败')
-        .fontSize(15)
-        .fontWeight(FontWeight.Medium)
-        .fontColor(TEXT_MAIN)
-      Text('网络不给力，或缓存已被清理')
-        .fontSize(12)
-        .fontColor(TEXT_DIM)
-        .margin({ top: 8 })
-
-      Row() {
-        Text('重试')
-          .fontSize(12.5)
-          .fontColor(ACCENT)
-      }
-      .padding({ left: 18, right: 18, top: 7, bottom: 7 })
-      .borderRadius(16)
-      .backgroundColor('#16222F')
-      .margin({ top: 16 })
-      .onClick(() => {
-        this.retry();
-      })
-    }
-    .width('100%')
-    .layoutWeight(1)
-    .justifyContent(FlexAlign.Center)
-    .alignItems(HorizontalAlign.Center)
-    .padding({ left: 24, right: 24 })
-  }
-
-  @Builder
-  notFoundBlock() {
-    Column() {
-      Text('未找到该远征队')
-        .fontSize(15)
-        .fontWeight(FontWeight.Medium)
-        .fontColor(TEXT_MAIN)
-      Text('可能是链接已过期，或数据正在更新')
-        .fontSize(12)
+      Text(text)
+        .fontSize(13)
         .fontColor(TEXT_DIM)
         .textAlign(TextAlign.Center)
-        .margin({ top: 8 })
-
-      Row() {
-        Text('‹ 返回')
-          .fontSize(12.5)
-          .fontColor(TEXT_SUB)
-      }
-      .padding({ left: 16, right: 16, top: 7, bottom: 7 })
-      .borderRadius(16)
-      .backgroundColor(CARD)
-      .margin({ top: 12 })
-      .onClick(() => {
-        Nav.pop();
-      })
+        .width('100%')
     }
     .width('100%')
     .layoutWeight(1)
-    .justifyContent(FlexAlign.Center)
-    .alignItems(HorizontalAlign.Center)
-    .padding({ left: 24, right: 24 })
+    .justifyContent(FlexAlign.Start)
+    // 200rpx 40rpx = 上 100vp、左右 20vp
+    .padding({ top: 100, left: 20, right: 20 })
+    .onClick(() => {
+      if (tappable) {
+        this.retry();
+      }
+    })
   }
 
   // ============ build ============
@@ -746,15 +793,14 @@ export struct ExpeditionView {
       this.topBar()
 
       if (this.loading && !this.found) {
-        this.loadingBlock()
-      } else if (this.failed && !this.found) {
-        this.failedBlock()
+        this.hintBlock('加载中...', false)
       } else if (!this.found) {
-        this.notFoundBlock()
+        this.hintBlock('未找到该远征队', this.failed)
       } else {
         Scroll() {
           Column() {
-            this.headCard()
+            // head 通栏（自己带左右 16vp），卡片区各自带 margin，故这里不加内边距
+            this.headBlock()
 
             if (this.patchList().length > 0) {
               this.patchCard()
@@ -765,10 +811,11 @@ export struct ExpeditionView {
           }
           .width('100%')
           .alignItems(HorizontalAlign.Start)
+          .padding({ bottom: BOTTOM_PAD })
         }
         .width('100%')
         .layoutWeight(1)
-        .align(Alignment.Top)
+        .align(Alignment.TopStart)
         .scrollBar(BarState.Off)
         .edgeEffect(EdgeEffect.Spring)
       }
@@ -776,7 +823,5 @@ export struct ExpeditionView {
     .width('100%')
     .height('100%')
     .backgroundColor(BG)
-    .alignItems(HorizontalAlign.Start)
-    .padding({ left: PAGE_PAD, right: PAGE_PAD, bottom: BOTTOM_PAD })
   }
 }

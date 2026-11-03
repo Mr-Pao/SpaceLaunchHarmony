@@ -52,6 +52,14 @@ export interface VideoRef {
   mins?: number;
   /** 抓取时是否仍在直播 */
   live?: boolean;
+  /**
+   * 已转存到自家 COS 的可播放地址（HLS/MP4）。
+   *
+   * 线上 2026-11-03 实测 **命中 0 条**（上游还没把视频转存进来），所以
+   * 「可播」分支实际永远不会触发。字段仍然要接：CI 一补上就能直接播，
+   * 视图层不该为此再改一次。
+   */
+  cosUrl?: string;
 }
 
 /** 一次发射下挂的全部视频 */
@@ -93,7 +101,13 @@ export interface VideosPayload extends BasePayload {
  * 发射名与 net 一并带下来，卡片下方才能显示「发射 11月5日 20:30」。
  */
 export interface VideoRow {
-  /** 去重后的唯一键（就是 url），ForEach 的 key 用它 */
+  /**
+   * ForEach 的 key。
+   *
+   * 不再用 url 当 key：小程序按 JSON 原序渲染、**不去重**，同一路直播被上游
+   * 重复收录时 url 会撞，撞了 ForEach 会复用错节点。改成「序号 + url」，
+   * 既保证唯一，又保留了「重复条目照常显示」的小程序行为。
+   */
   vidKey: string;
   url: string;
   /**
@@ -117,38 +131,26 @@ export interface VideoRow {
   net: string;
   /** 所属发射名，标题为空时兜底 */
   launchName: string;
-  /** tid === 1，筛选与徽标都用它 */
+  /** tid === 1，官方徽标用它 */
   official: boolean;
+  /**
+   * 已转存到自家 COS 的可播地址；空串 = 只能复制链接。
+   * 线上 2026-11-03 实测命中 0 条，但字段必须一路接到底，
+   * 否则 CI 补上转存后视图层还要再改一次。
+   */
+  cosUrl: string;
+  /**
+   * `Boolean(cosUrl)` 的预计算值（小程序 video-gallery.vue 同口径）。
+   *
+   * 不在视图里写 `row.cosUrl.length > 0` 而单列一个字段，是为了让
+   * 「可播 / 链接」徽标、点击分支、统计行的可播条数三处判断必然一致。
+   */
+  playable: boolean;
 }
 
 /** null / undefined → 空串（与 utils/Format 的 strOf 同语义，见文件头） */
 function vdStr(v: string | null | undefined): string {
   return v !== undefined && v !== null ? v : '';
-}
-
-/** ISO → 毫秒，解析失败返回 0（不用 NaN 往下传，比较时才不会全假） */
-function vdTime(v: string): number {
-  const t: number = Date.parse(v);
-  return Number.isNaN(t) ? 0 : t;
-}
-
-/**
- * tid → 排序档位。
- *
- * 注意 tid 是数字、不是字符串（实测 1 / 3 / 4）。未知值排最后而不是排除：
- * 上游将来加 2（比如「官方回放」）时，宁可多出一条排末尾，也不要静默消失。
- */
-function vdRank(tid: number): number {
-  if (tid === 1) {
-    return 0;
-  }
-  if (tid === 3) {
-    return 1;
-  }
-  if (tid === 4) {
-    return 2;
-  }
-  return 3;
 }
 
 /**
@@ -206,13 +208,16 @@ export function vdKindLabel(tid: number, kind: string): string {
  * 把 videos 载荷摊平成 UI 行。
  *
  * @param limit 最多返回多少行；<= 0 表示不限制。
- *              页面自己按 20 条一屏切片，这里给 0 拿全量 —— 全量放普通成员，
- *              不进 @State（341 个对象被状态代理不划算）。
+ *              页面自己按 60 条一屏切片，这里给 0 拿全量 —— 全量放普通成员，
+ *              不进 @State（几百个对象被状态代理不划算）。
  *
- * 三件事必须在这里做完，否则视图层会各写一遍：
- *   ① 丢掉没有 url 的记录（点了没反应比没有更糟）；
- *   ② 按 url 去重 —— 同一场直播常被同一发射的多个条目重复收录；
- *   ③ 排序 = tid 档位优先，同档内发射时间新的在前（直播列表的常识）。
+ * 只做一件事：丢掉没有 url 的记录（点了没反应比没有更糟）。
+ *
+ * **不去重、不排序** —— 这一步是 2026-11-03 按小程序改的：video-gallery.vue
+ * 的 `all` 计算属性就是 `list.flatMap(vids)` 原序展开，既没有 Set 去重也没有
+ * `sort`。原来的「按 url 去重 + tid 排序 + net/start 倒序」会让鸿蒙侧的
+ * 顺序永远跟小程序对不上，用户两边对照时看到的是两份不同的列表。
+ * 上游偶尔把同一路直播重复收录，小程序会照原样显示两条，这里也一样。
  */
 export function flattenVideos(payload: VideosPayload, limit: number): VideoRow[] {
   const rows: VideoRow[] = [];
@@ -220,7 +225,6 @@ export function flattenVideos(payload: VideosPayload, limit: number): VideoRow[]
     return rows;
   }
   const list: VideoItem[] = payload.list !== undefined && payload.list !== null ? payload.list : [];
-  const seen: Set<string> = new Set<string>();
 
   for (let i = 0; i < list.length; i++) {
     const item: VideoItem = list[i];
@@ -241,20 +245,18 @@ export function flattenVideos(payload: VideosPayload, limit: number): VideoRow[]
       if (url.length === 0) {
         continue;
       }
-      if (seen.has(url)) {
-        continue;
-      }
-      seen.add(url);
 
       const tid: number = v.tid !== undefined && v.tid !== null ? v.tid : 0;
       const ownTitle: string = vdStr(v.title).trim();
       const title: string = ownTitle.length > 0
         ? ownTitle
         : (launchName.length > 0 ? launchName : '发射视频');
+      const cosUrl: string = vdStr(v.cosUrl).trim();
 
       // 显式类型注解是 ArkTS 的硬要求（禁无类型对象字面量），不是风格问题
       const row: VideoRow = {
-        vidKey: url,
+        // 原序渲染 + 允许重复 → key 只能用序号拼，单靠 url 会撞
+        vidKey: String(rows.length) + '|' + url,
         url: url,
         launchId: launchId,
         title: title,
@@ -267,26 +269,13 @@ export function flattenVideos(payload: VideosPayload, limit: number): VideoRow[]
         live: v.live === true,
         net: net,
         launchName: launchName,
-        official: tid === 1
+        official: tid === 1,
+        cosUrl: cosUrl,
+        playable: cosUrl.length > 0
       };
       rows.push(row);
     }
   }
-
-  rows.sort((a: VideoRow, b: VideoRow): number => {
-    const ra: number = vdRank(a.tid);
-    const rb: number = vdRank(b.tid);
-    if (ra !== rb) {
-      return ra - rb;
-    }
-    const ta: number = vdTime(a.net);
-    const tb: number = vdTime(b.net);
-    if (ta !== tb) {
-      return tb - ta;
-    }
-    // 同一场发射的多个源：直播开始得晚的更接近「正片」
-    return vdTime(b.start) - vdTime(a.start);
-  });
 
   if (limit > 0 && rows.length > limit) {
     return rows.slice(0, limit);
