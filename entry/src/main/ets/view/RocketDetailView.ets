@@ -60,7 +60,9 @@ import {
 } from '../utils/Format';
 import { fullImageOf } from '../utils/Media';
 import { CoreStatusEntry } from '../constants/ZhMaps';
-import { RocketConfig, LaunchSummary, LaunchPad, PadLocation } from '../model/Common';
+import {
+  RocketConfig, LaunchSummary, LaunchPad, PadLocation, LaunchProvider, LaunchRocket
+} from '../model/Common';
 import { PreviousPayload, UpcomingPayload } from '../model/Launch';
 import { Nav } from '../routes/Nav';
 import {
@@ -242,9 +244,6 @@ export interface RkCoresPayload {
 
 // ============ 视图模型（ArkTS 禁止无类型对象字面量，一律先建 class） ============
 
-/** 空记录哨兵：@State 的接口类型字段需要一个可赋的默认值 */
-const EMPTY_RK: RkLauncher = {};
-
 /** 一个参数格：10vp 灰标签 + 14vp 粗体值（小程序 .param-cell） */
 class RkSpecCell {
   label: string = '';
@@ -308,7 +307,11 @@ class RkVariant {
   chipName: string = '';
   cur: boolean = false;
   active: boolean = false;
-  ref: RkLauncher = EMPTY_RK;
+  /**
+   * 该 chip 对应的完整记录。用可空而不是空对象哨兵：
+   * ArkTS 对「接口类型 + 空对象字面量」的容忍度很低，判空更保险。
+   */
+  ref: RkLauncher | null = null;
   constructor(key: string, chipName: string, cur: boolean, active: boolean, ref: RkLauncher) {
     this.key = key;
     this.chipName = chipName;
@@ -404,7 +407,11 @@ export struct RocketDetailView {
       rocketFavInit(ctx);
     }
     this.syncFaved();
+    // 三个数据集互不依赖，一起发出去：launchers 走网络失败时，
+    // 「即将 / 历史发射」与「芯级」仍能靠缓存或独立请求上屏
     this.loadLauncher(false);
+    this.loadRecords();
+    this.loadCores();
   }
 
   // ============ 加载 ============
@@ -439,9 +446,6 @@ export struct RocketDetailView {
         this.applyPayload(data);
         this.loading = false;
         this.failed = false;
-        // 型号库到手才知道「系列里还有哪些构型」，这时才好在整系列范围内捞发射记录
-        this.loadRecords();
-        this.loadCores();
       })
       .catch((e: BusinessError) => {
         this.loading = false;
@@ -677,14 +681,11 @@ export struct RocketDetailView {
 
   /** 一条发射记录的 configuration.id（缺失返回空串） */
   private launchConfigId(item: LaunchSummary): string {
-    const rocket: object | undefined = item.rocket;
+    const rocket: LaunchRocket | undefined = item.rocket;
     if (rocket === undefined || rocket === null) {
       return '';
     }
-    const cfg: RocketConfig | undefined = item.rocket !== undefined ? item.rocket.configuration : undefined;
-    if (cfg === undefined || cfg === null) {
-      return '';
-    }
+    const cfg: RocketConfig = rocket.configuration;
     const idv: number | null | undefined = cfg.id;
     return idv === undefined || idv === null ? '' : String(idv);
   }
@@ -869,7 +870,7 @@ export struct RocketDetailView {
 
   /** 切换构型：整页数据跟着换（参数、战绩、回收、芯级、图片库都在当前构型上算） */
   private switchTo(v: RkVariant): void {
-    if (v.cur) {
+    if (v.cur || v.ref === null) {
       return;
     }
     this.applyLauncher(v.ref);
@@ -998,11 +999,11 @@ export struct RocketDetailView {
     const recs: LaunchSummary[] = this.records();
     const out: string[] = [];
     for (let i = 0; i < recs.length; i++) {
-      const p: object | undefined = recs[i].launch_service_provider;
+      const p: LaunchProvider | undefined = recs[i].launch_service_provider;
       if (p === undefined || p === null) {
         continue;
       }
-      const n: string = strOf(recs[i].launch_service_provider.name).trim();
+      const n: string = strOf(p.name).trim();
       if (n.length > 0 && out.indexOf(n) < 0) {
         out.push(n);
       }
@@ -1742,7 +1743,7 @@ export struct RocketDetailView {
         // 状态标签靠左、图片库入口靠右，共用一行：
         // 入口放这里比放页面中部更早看到，也不再占一整张卡
         Row() {
-          // Flex 而不是 Row：Row 没有 flexWrap，标签 2~3 个宽度不一时会被压缩
+          // 用 Flex 而不是 Row：Row 不支持自动换行，标签 2~3 个宽度不一时会被压缩
           Flex({ wrap: FlexWrap.Wrap, alignItems: ItemAlign.Center }) {
             Text(this.statusText())
               .fontSize(11)
@@ -1809,8 +1810,8 @@ export struct RocketDetailView {
     }
     .width('100%')
     .height(HERO_H)
-    // 通栏：不裁圆角、不留边距（小程序 .hero 顶到屏幕两侧）
-    .clip(true)
+    // 通栏：不留边距、不裁圆角、不加 clip（小程序 .hero 直接顶到屏幕两侧，
+    // 裁切只会让 Swiper 边缘的字描边被切掉，没有收益）
   }
 
   // ============ UI：通用小件 ============
@@ -1818,8 +1819,8 @@ export struct RocketDetailView {
   /**
    * 卡片 / 区块标题的统一排版件：左标题 + 右小字。
    *
-   * ⚠ 这里**必须是两个无参 @Builder**，不能做成 `head(title, note)` 这种按值传参的
-   *   通用件：本工程踩过两次 —— @Builder 按值传参不建立响应式依赖，
+   * ⚠ 下面这一整组标题**必须各自是无参 @Builder**，不能做成 `head(title, note)`
+   *   这种按值传参的通用件：本工程踩过两次 —— @Builder 按值传参不建立响应式依赖，
    *   切构型后标题右侧的 variant / 计数会停在旧值，而左边文字却变了。
    *   所以每处标题各写一个无参 builder，直接读 this.xxx。
    */
@@ -2047,7 +2048,8 @@ export struct RocketDetailView {
     .justifyContent(FlexAlign.Center)
     .backgroundColor('#0AFFFFFF')
     .borderRadius(19)
-    .margin({ top: 9 })
+    // 小程序 .more-btn margin-top 4rpx = 2vp
+    .margin({ top: 2 })
     .onClick(() => {
       this.coresOpen = !this.coresOpen;
     })
@@ -2065,7 +2067,8 @@ export struct RocketDetailView {
     .justifyContent(FlexAlign.Center)
     .backgroundColor('#0AFFFFFF')
     .borderRadius(19)
-    .margin({ top: 9 })
+    // 小程序 .more-btn margin-top 4rpx = 2vp
+    .margin({ top: 2 })
     .onClick(() => {
       this.upcomingOpen = !this.upcomingOpen;
     })
@@ -2083,7 +2086,8 @@ export struct RocketDetailView {
     .justifyContent(FlexAlign.Center)
     .backgroundColor('#0AFFFFFF')
     .borderRadius(19)
-    .margin({ top: 9 })
+    // 小程序 .more-btn margin-top 4rpx = 2vp
+    .margin({ top: 2 })
     .onClick(() => {
       this.historyOpen = !this.historyOpen;
     })
@@ -2127,12 +2131,14 @@ export struct RocketDetailView {
       .height(38)
 
       // 当前构型全名：chip 里只有构型短名，这里补全名消歧
-      Text(this.variantNote().length > 0 ? this.currentFullName() : '')
-        .fontSize(10.5)
-        .fontColor('#5D6A7E')
-        .maxLines(1)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
-        .margin({ top: 7 })
+      if (this.currentFullName().length > 0) {
+        Text(this.currentFullName())
+          .fontSize(10.5)
+          .fontColor('#5D6A7E')
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .margin({ top: 7 })
+      }
     }
     .width('100%')
     .alignItems(HorizontalAlign.Start)
@@ -2321,11 +2327,12 @@ export struct RocketDetailView {
             .fontColor('#4ADE80')
             .lineHeight(32)
             .letterSpacing(-0.5)
+          // 小程序是 align-items:baseline；ArkUI 的 ItemAlign.Baseline 只在 Flex 上有先例，
+          // 这里用 Row 底对齐 + 2vp 下移近似，视觉差 < 1vp
           Text('成功率')
             .fontSize(11)
             .fontColor(TEXT_MUTED)
-            .margin({ left: 6 })
-            .alignSelf(ItemAlign.Baseline)
+            .margin({ left: 6, bottom: 2 })
         }
         .alignItems(VerticalAlign.Bottom)
 
@@ -2482,20 +2489,21 @@ export struct RocketDetailView {
     Column() {
       this.coresHead()
 
+      // 展开按钮在小程序里是 .core-card 的子节点（在卡片内部，左右留 12vp）
       Column() {
         ForEach(this.coresShown(), (item: RkCoreItem, idx: number) => {
           this.coreRow(item, idx === 0)
         }, (item: RkCoreItem) => 'core' + item.key)
+
+        if (this.cores().length > CORE_FOLD) {
+          this.coresMore()
+        }
       }
       .width('100%')
       .padding({ left: 12, right: 12, top: 3, bottom: 3 })
       .backgroundColor(CARD_BG)
       .borderRadius(CARD_RADIUS)
       .border({ width: 1, color: '#0DFFFFFF' })
-
-      if (this.cores().length > CORE_FOLD) {
-        this.coresMore()
-      }
     }
     .width('100%')
     .alignItems(HorizontalAlign.Start)
@@ -2630,10 +2638,16 @@ export struct RocketDetailView {
 
   // ============ UI：外部资料 ============
 
+  /**
+   * 两行外链各一个无参 builder。
+   * 原来写成 `linkRow(name, url, label, first)` 时，`first` 由 this.infoUrl() 推出，
+   * 而按值传参不会跟着 @State 走 —— 切换构型后「有没有上边框」会停在旧构型。
+   * 现在分隔线由 linksCard 自己画，行内不再需要 first。
+   */
   @Builder
-  linkRow(name: string, url: string, label: string, first: boolean) {
+  infoLink() {
     Row() {
-      Text(name)
+      Text('官方网站')
         .fontSize(13.5)
         .fontColor('#E2E8F0')
       Blank()
@@ -2644,9 +2658,27 @@ export struct RocketDetailView {
     .width('100%')
     .alignItems(VerticalAlign.Center)
     .padding({ top: 9, bottom: 9 })
-    .border({ width: { top: first ? 0 : 1 }, color: '#0DFFFFFF' })
     .onClick(() => {
-      this.copyLink(url, label);
+      this.copyLink(this.infoUrl(), '官网');
+    })
+  }
+
+  @Builder
+  wikiLink() {
+    Row() {
+      Text('维基百科')
+        .fontSize(13.5)
+        .fontColor('#E2E8F0')
+      Blank()
+      Text('复制链接')
+        .fontSize(12)
+        .fontColor(ACCENT)
+    }
+    .width('100%')
+    .alignItems(VerticalAlign.Center)
+    .padding({ top: 9, bottom: 9 })
+    .onClick(() => {
+      this.copyLink(this.wikiUrl(), '维基百科');
     })
   }
 
@@ -2656,10 +2688,17 @@ export struct RocketDetailView {
       this.linksHead()
 
       if (this.infoUrl().length > 0) {
-        this.linkRow('官方网站', this.infoUrl(), '官网', true)
+        this.infoLink()
+      }
+      // 两条都在时补一条 1vp 分隔线；只画在第二行上方，与小程序的 border-top 一致
+      if (this.infoUrl().length > 0 && this.wikiUrl().length > 0) {
+        Row()
+          .width('100%')
+          .height(1)
+          .backgroundColor('#0DFFFFFF')
       }
       if (this.wikiUrl().length > 0) {
-        this.linkRow('维基百科', this.wikiUrl(), '维基百科', this.infoUrl().length === 0)
+        this.wikiLink()
       }
     }
     .width('100%')
