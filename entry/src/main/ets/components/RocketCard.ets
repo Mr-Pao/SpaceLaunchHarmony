@@ -2,6 +2,7 @@
  * components/RocketCard.ets —— 「全球火箭实力榜」排名卡 + launchers 数据集形状
  *
  * 对位小程序：pages/rockets/rockets.vue 的 rank-card 模板 + getData() 里的派生字段计算。
+ * 视觉数值全部按 rockets.vue 的 wxss 取（rpx ÷ 2 = vp），逐条对位处标了原值。
  *
  * ── 为什么派生字段在这里一次算好 ──
  *   榜单要排序就得有 score / rateAdj；卡片要显示就得有 leoText / rateText / maker / flag。
@@ -24,15 +25,24 @@
 import { agencyLabel, flagOf, rocketFullName, strOf } from '../utils/Format';
 import { RocketConfig } from '../model/Common';
 
-const CARD_BG: string = '#141A26';
-const CARD_BORDER: string = '#0DFFFFFF';
-const CARD_BORDER_TOP: string = '#26374D';
-const TXT_MAIN: string = '#E8EEF8';
-const TXT_SUB: string = '#A7B4C7';
-const TXT_DIM: string = '#55617A';
-const ACCENT: string = '#38BDF8';
-/** 缩略图边长。88 是榜单卡的实测值：再小读不出型号，再大右侧三格就挤成两行 */
-const MEDIA: number = 88;
+/** .m-v / 名称那一档 */
+const TXT_MAIN: string = '#F0F5FC';
+/** .rank-en 那一档 */
+const TXT_EN: string = '#7D8BA0';
+/** .rank-maker */
+const TXT_MAKER: string = '#8FA0B6';
+/** .m-k / .rank-no 的字色 */
+const TXT_MUTE: string = '#5D6A7E';
+const ACCENT_LIGHT: string = '#7DD3FC';
+
+/**
+ * 图区尺寸：对位 .rank-media 的 228rpx × 216rpx。
+ * 原来是 88×88 正方形 —— 那是按「图标」想的；小程序这里其实是条 4:3.8 的
+ * 横图位（火箭照片多是竖构图，稍高的框能少切掉箭体）。
+ */
+const MEDIA_W: number = 114;
+const MEDIA_H: number = 108;
+
 /** 每个型号打分前先垫 10 次「平均表现」的虚拟发射 */
 const RATE_PRIOR: number = 10;
 
@@ -127,7 +137,7 @@ export class RtRocket implements RocketConfig {
   en: string = '';
   /** 展示用制造商：优先中文机构名，无词条回退英文原名 */
   maker: string = '';
-  /** 国旗 emoji；认不出国籍为空串（FlagSrc 返回的是 emoji，不是图片路径） */
+  /** 国旗 emoji；认不出国籍为空串（flagOf 返回的是 emoji，不是图片路径） */
   flag: string = '';
   /** cn / us / ru / eu / asia / other */
   region: string = 'other';
@@ -170,6 +180,7 @@ function rtNum(v: number | null | undefined): number {
 /**
  * kg → '22.8 吨' / '850 kg'。
  * ≥1000 换吨：23 吨比 22800 kg 好扫，小型箭仍用 kg 才有分辨率。
+ * 整数不带小数点（68 吨而不是 68.0 吨）—— 卡片只有 3 个数字位，多一个 .0 就挤。
  */
 function rtLeoText(kg: number): string {
   if (kg <= 0) {
@@ -400,6 +411,10 @@ function rtRegionOf(maker: string): string {
 /**
  * 用法：
  *   RocketCard({ item: rocket, rankNo: index + 1, onOpen: (r: RtRocket) => { ... } })
+ *
+ * 卡片结构（对位 .rank-card 的 flex 横排）：
+ *   [图 114×108：名次角标贴左上 / 「可复用」贴左下 / 底部渐暗]
+ *   [右列：名称 + 详情胶囊 → 英文名 → 国旗 + 制造商 →（撑到底）→ 三格指标]
  */
 @Component
 export struct RocketCard {
@@ -423,130 +438,198 @@ export struct RocketCard {
     this.broken = false;
   }
 
-  /** 名次配色：#1 高亮，2-3 亮白，4+ 压暗 —— 前三名是榜单的信息主体 */
-  private rankColor(): string {
-    if (this.rankNo === 1) {
-      return ACCENT;
-    }
-    if (this.rankNo <= 3) {
-      return TXT_MAIN;
-    }
-    return TXT_DIM;
-  }
-
-  private rankSize(): number {
-    return this.rankNo <= 3 ? 13 : 11;
-  }
-
   build() {
-    Row() {
-      this.media()
+    Stack({ alignContent: Alignment.TopStart }) {
+      Row() {
+        this.media()
 
-      Column() {
-        Row() {
-          Text(this.item.zh)
-            .fontSize(14)
-            .fontWeight(FontWeight.Medium)
-            .fontColor(TXT_MAIN)
-            .maxLines(1)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
-            .layoutWeight(1)
+        Column() {
+          // 名称行：中文名 +「详情」胶囊（对位 .rank-more）
+          Row() {
+            Text(this.item.zh)
+              .fontSize(15)
+              .fontWeight(FontWeight.Medium)
+              .fontColor('#FFFFFF')
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+              .layoutWeight(1)
 
-          if (this.item.reusable) {
-            Text('可复用')
-              .fontSize(8)
-              .fontColor(ACCENT)
-              .padding({ left: 4, right: 4, top: 1, bottom: 1 })
-              .borderRadius(3)
-              .backgroundColor('#1A2A3C')
-              .margin({ left: 6 })
+            // 详情：青边胶囊。原来是裸灰字 —— 一行里两个可点的东西（卡片 + 详情），
+            // 没有边框就看不出后者也是个入口
+            Text('详情')
+              .fontSize(9.5)
+              .fontColor(ACCENT_LIGHT)
+              .padding({ left: 7, right: 7, top: 1, bottom: 1 })
+              .borderRadius(999)
+              .border({ width: 1, color: '#5238BDF8' })
+              .margin({ left: 5 })
           }
+          .width('100%')
+          .alignItems(VerticalAlign.Center)
 
-          Text('详情')
-            .fontSize(10)
-            .fontColor(TXT_DIM)
-            .margin({ left: 8 })
-        }
-        .width('100%')
-        .alignItems(VerticalAlign.Center)
-
-        // 中文在上、英文在下；没有中文词条时两者相同，就不重复显示
-        if (this.item.en.length > 0) {
-          Text(this.item.en)
-            .fontSize(10)
-            .fontColor(TXT_DIM)
-            .maxLines(1)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
-            .width('100%')
-            .margin({ top: 2 })
-        }
-
-        // 国旗靠机构名认国籍，认不出就不画国旗也不留空位
-        Row() {
-          if (this.item.flag.length > 0) {
-            Text(this.item.flag)
+          // 中文在上、英文在下；没有中文词条时两者相同，就不重复显示
+          if (this.item.en.length > 0) {
+            Text(this.item.en)
               .fontSize(10)
-              .margin({ right: 4 })
+              .fontColor(TXT_EN)
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+              .width('100%')
+              .margin({ top: 2 })
           }
-          Text(this.item.maker.length > 0 ? this.item.maker : '未知制造商')
-            .fontSize(10)
-            .fontColor(TXT_SUB)
-            .maxLines(1)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
-            .layoutWeight(1)
-        }
-        .width('100%')
-        .alignItems(VerticalAlign.Center)
-        .margin({ top: 4 })
 
-        Row() {
-          this.metric(this.item.leoText, 'LEO 运力')
-          this.metric(this.item.launchText, '累计发射')
-          this.metric(this.item.rateText, '成功率')
+          // 国旗 + 制造商。
+          // ⚠ 小程序这里是真图片（<image class="flag">，34×24rpx 的 png 圆角旗）；
+          //   鸿蒙工程里没有国旗资源（没有 assets/flags，也没有网络旗图接口），
+          //   所以保留 utils/Format 的 flagOf() 返回的 emoji。
+          //   要换成真图，得先把 90+ 面旗打进 rawfile 并写「厂商 → 旗文件名」映射，
+          //   那是另一个任务，这里不做。
+          Row() {
+            if (this.item.flag.length > 0) {
+              Text(this.item.flag)
+                .fontSize(10)
+                .margin({ right: 4 })
+            }
+            Text(this.item.maker.length > 0 ? this.item.maker : '未知制造商')
+              .fontSize(10.5)
+              .fontColor(TXT_MAKER)
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+              .layoutWeight(1)
+          }
+          .width('100%')
+          .alignItems(VerticalAlign.Center)
+          .margin({ top: 5 })
+
+          // 撑开剩余高度，把三格指标压到卡片底部（对位 .rank-metrics 的 margin-top:auto）。
+          // 右列高度固定成图高，所以这里的剩余空间是可算的，Blank 不会把卡片撑高。
+          Blank()
+
+          // 三格硬指标：数值在上、量词在下，等宽三等分（对位 .rank-metrics）
+          Row() {
+            this.metricLeo()
+            this.metricLaunch()
+            this.metricRate()
+          }
+          .width('100%')
+          .alignItems(VerticalAlign.Top)
         }
-        .width('100%')
-        .margin({ top: 8 })
+        .layoutWeight(1)
+        .height(MEDIA_H)
+        .alignItems(HorizontalAlign.Start)
+        .margin({ left: 9 })
       }
-      .layoutWeight(1)
-      .alignItems(HorizontalAlign.Start)
-      .margin({ left: 10 })
+      .width('100%')
+      .padding(8)
+      .alignItems(VerticalAlign.Top)
+      // 渐变底（对位 linear-gradient(150deg, rgba(25,32,47,.96), rgba(16,21,32,.96))）：
+      // 留 4% 透明度，星空能透一点点上来，卡片不至于变成一块死黑
+      .linearGradient({
+        angle: 150,
+        colors: [['#F519202F', 0.0], ['#F5101520', 1.0]]
+      })
+      .borderRadius(10)
+      .border({ width: 1, color: this.rankNo <= 3 ? '#3838BDF8' : '#0FFFFFFF' })
+      .shadow({ radius: 15, color: '#38000000', offsetX: 0, offsetY: 5 })
+
+      // 前三名左侧青竖线（对位 .is-top::before：3rpx 宽、上下各收 22rpx）。
+      // 高度写死 102 = 卡高 124 − 上下各 11：卡高由固定的图区 108 + padding 16 决定，
+      // 不随文字换行变化，所以不需要百分比（ArkUI 也没有 calc）。
+      if (this.rankNo <= 3) {
+        Column()
+          .width(1.5)
+          .height(102)
+          .margin({ top: 11 })
+          .linearGradient({
+            angle: 180,
+            colors: [['#F27DD3FC', 0.0], ['#0038BDF8', 1.0]]
+          })
+          .hitTestBehavior(HitTestMode.None)
+      }
     }
     .width('100%')
-    .padding(10)
-    .alignItems(VerticalAlign.Top)
-    .backgroundColor(CARD_BG)
-    .borderRadius(12)
-    // 前三名描边提亮一档：滚动时一眼能看出「还在第一屏的头部」
-    .border({ width: 1, color: this.rankNo <= 3 ? CARD_BORDER_TOP : CARD_BORDER })
     .onClick(() => {
       this.onOpen(this.item);
     })
   }
 
-  /** 三格硬指标：数值在上、量词在下，等宽三等分 */
+  // ---- 三格指标 ----
+  //
+  // ⚠ 与 RocketView 的三格同一个坑：@Builder **按值传参**时不建立响应式依赖，
+  //   `metric(this.item.leoText, 'LEO 运力')` 在 List 复用节点、@Prop 换数据时
+  //   可能只更新外层而三格的字符串停在旧值。所以每格一个无参 @Builder，
+  //   Text 里直接读 this.item.xxx。样式重复三遍，换的是「一定会刷新」。
+
+  /** 第一格：LEO 运力（对位 .m-v 26rpx / .m-k 18rpx） */
   @Builder
-  metric(value: string, caption: string) {
+  metricLeo() {
     Column() {
-      Text(value)
-        .fontSize(12)
+      Text(this.item.leoText)
+        .fontSize(13)
         .fontWeight(FontWeight.Medium)
         .fontColor(TXT_MAIN)
         .maxLines(1)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
         .width('100%')
-      Text(caption)
+      Text('LEO 运力')
         .fontSize(9)
-        .fontColor(TXT_DIM)
-        .margin({ top: 2 })
+        .fontColor(TXT_MUTE)
+        .maxLines(1)
+        .margin({ top: 1 })
+    }
+    .layoutWeight(1)
+    .alignItems(HorizontalAlign.Start)
+    .padding({ right: 4 })
+  }
+
+  /** 第二格：累计发射 */
+  @Builder
+  metricLaunch() {
+    Column() {
+      Text(this.item.launchText)
+        .fontSize(13)
+        .fontWeight(FontWeight.Medium)
+        .fontColor(TXT_MAIN)
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .width('100%')
+      Text('累计发射')
+        .fontSize(9)
+        .fontColor(TXT_MUTE)
+        .maxLines(1)
+        .margin({ top: 1 })
+    }
+    .layoutWeight(1)
+    .alignItems(HorizontalAlign.Start)
+    .padding({ right: 4 })
+  }
+
+  /** 第三格：成功率 */
+  @Builder
+  metricRate() {
+    Column() {
+      Text(this.item.rateText)
+        .fontSize(13)
+        .fontWeight(FontWeight.Medium)
+        .fontColor(TXT_MAIN)
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .width('100%')
+      Text('成功率')
+        .fontSize(9)
+        .fontColor(TXT_MUTE)
+        .maxLines(1)
+        .margin({ top: 1 })
     }
     .layoutWeight(1)
     .alignItems(HorizontalAlign.Start)
   }
 
   /**
-   * 左侧缩略图位。
-   * 有图 → Image(Cover)；图挂了或本来就没图 → 画一个几何火箭（任务书要求不留空白块）。
-   * 名次压在图上：榜单的第一视觉锚点，垫一层半透明底保证压在图上也读得清。
+   * 左侧图区（对位 .rank-media：114×108、radius 12rpx、底 #0f1520）。
+   * 有图 → Cover；图挂了或本来就没图 → 几何火箭（见 geoRocket）。
+   * 图区上压两件东西：左上名次角标、左下「可复用」标记 —— 两者都在图上，
+   * 不占右列的横向空间，这也是小程序把它们放在图里的原因。
    */
   @Builder
   media() {
@@ -564,47 +647,129 @@ export struct RocketCard {
         this.geoRocket()
       }
 
-      Text('#' + this.rankNo.toString())
-        .fontSize(this.rankSize())
-        .fontWeight(FontWeight.Bold)
-        .fontColor(this.rankColor())
-        .padding({ left: 4, right: 4, top: 0, bottom: 0 })
-        .borderRadius(4)
-        .backgroundColor('#B30A0E17')
-        .margin({ left: 4, top: 4 })
+      // 底部渐暗（对位 .rank-media::after：底部 64rpx 的 rgba(6,10,18,.82)→透明）。
+      // 作用是让压在图上的一切（尤其是左下角标）在任何照片上都读得清。
+      Column() {
+        Column()
+          .width('100%')
+          .height(30)
+          .linearGradient({
+            angle: 180,
+            colors: [['#00060A12', 0.0], ['#D1060A12', 1.0]]
+          })
+      }
+      .width('100%')
+      .height('100%')
+      .justifyContent(FlexAlign.End)
+      .hitTestBehavior(HitTestMode.None)
+
+      // 名次角标：贴左上直角、右下圆角（对位 .rank-no 的 border-bottom-right-radius 12rpx）。
+      // 前三名走金/银/铜渐变 + 深色字，4 名以后是半透明黑底 + 灰字。
+      // 文案带井号（小程序模板是 `#{{ i + 1 }}`，见 rockets.vue:134），别去掉。
+      // 四个分支只差底色与投影，字体/内边距一致 —— 拆开写是因为 ArkUI 的
+      // linearGradient 不能按条件传 undefined，硬合并要造一个假渐变。
+      if (this.rankNo === 1) {
+        Text('#' + this.rankNo.toString())
+          .fontSize(10.5)
+          .fontWeight(FontWeight.Bold)
+          .fontColor('#14181F')
+          .padding({ left: 7, right: 7, top: 2, bottom: 2 })
+          .borderRadius({ topLeft: 0, topRight: 0, bottomRight: 6, bottomLeft: 0 })
+          .linearGradient({
+            angle: 135,
+            colors: [['#7DD3FC', 0.0], ['#0EA5E9', 1.0]]
+          })
+          .shadow({ radius: 9, color: '#6B38BDF8', offsetX: 0, offsetY: 2 })
+      } else if (this.rankNo === 2) {
+        Text('#' + this.rankNo.toString())
+          .fontSize(10.5)
+          .fontWeight(FontWeight.Bold)
+          .fontColor('#14181F')
+          .padding({ left: 7, right: 7, top: 2, bottom: 2 })
+          .borderRadius({ topLeft: 0, topRight: 0, bottomRight: 6, bottomLeft: 0 })
+          .linearGradient({
+            angle: 135,
+            colors: [['#D6ECFF', 0.0], ['#8FB3D4', 1.0]]
+          })
+      } else if (this.rankNo === 3) {
+        Text('#' + this.rankNo.toString())
+          .fontSize(10.5)
+          .fontWeight(FontWeight.Bold)
+          .fontColor('#14181F')
+          .padding({ left: 7, right: 7, top: 2, bottom: 2 })
+          .borderRadius({ topLeft: 0, topRight: 0, bottomRight: 6, bottomLeft: 0 })
+          .linearGradient({
+            angle: 135,
+            colors: [['#A8C4DD', 0.0], ['#6D8AA8', 1.0]]
+          })
+      } else {
+        Text('#' + this.rankNo.toString())
+          .fontSize(10.5)
+          .fontWeight(FontWeight.Bold)
+          .fontColor('#8A97A8')
+          .padding({ left: 7, right: 7, top: 2, bottom: 2 })
+          .borderRadius({ topLeft: 0, topRight: 0, bottomRight: 6, bottomLeft: 0 })
+          .backgroundColor('#C2060A12')
+      }
+
+      // 「可复用」贴图左下（对位 .rank-flag：18rpx 字、rgba(6,10,18,.7) 底、
+      // 右上圆角 8rpx）。原来放名称行右侧，会跟「详情」抢横向空间，
+      // 也在视觉上把「这是一枚可复用火箭」这条属性从图上挤进了文字里。
+      if (this.item.reusable) {
+        Column() {
+          Text('可复用')
+            .fontSize(9)
+            .fontColor('#9FD0FF')
+            .letterSpacing(0.25)
+            .padding({ left: 6, right: 6, top: 1.5, bottom: 1.5 })
+            .borderRadius({ topLeft: 0, topRight: 4, bottomRight: 0, bottomLeft: 0 })
+            .backgroundColor('#B3060A12')
+        }
+        .width('100%')
+        .height('100%')
+        .justifyContent(FlexAlign.End)
+        .alignItems(HorizontalAlign.Start)
+        .hitTestBehavior(HitTestMode.None)
+      }
     }
-    .width(MEDIA)
-    .height(MEDIA)
-    .borderRadius(8)
+    .width(MEDIA_W)
+    .height(MEDIA_H)
+    .borderRadius(6)
     .clip(true)
     .backgroundColor('#0F1520')
   }
 
   /**
    * 几何占位：整流罩（圆角头）+ 箭体 + 尾翼。
-   * 三段纯色块拼出来的剪影，比一个 🚀 emoji 更像「缩略图」，
-   * 也比灰底方块更能一眼认出这是火箭。
+   *
+   * ⚠ 先说清事实差异：小程序现状（rockets.vue:133）的占位是
+   *   `<text class="rank-ph-icon">🚀</text>`，56rpx / opacity .4 的一个 emoji；
+   *   审计第 20 条写的「geoRocket 三段几何拼图」在小程序仓库里 grep 不到（已全文搜过
+   *   geoRocket / geo-rocket，零命中），是按更早的设计稿写的。
+   *   这里**保留几何剪影**：在 114×108 的图区里，三段纯色块比一个灰扑扑的 emoji
+   *   更像缩略图，也不会在不同字体下大小乱飘。若要严格对齐现状，把 media() 里的
+   *   `this.geoRocket()` 换成 `Text('🚀').fontSize(28).opacity(0.4)` 即可。
    */
   @Builder
   geoRocket() {
     Column() {
       Column()
-        .width(13)
-        .height(20)
-        .borderRadius(7)
+        .width(17)
+        .height(26)
+        .borderRadius(9)
         .linearGradient({
           angle: 180,
           colors: [['#5B7FAE', 0.0], ['#2E4463', 1.0]]
         })
 
       Column()
-        .width(11)
-        .height(32)
+        .width(14)
+        .height(41)
         .backgroundColor('#2A3D5A')
 
       Column()
-        .width(19)
-        .height(5)
+        .width(24)
+        .height(6)
         .borderRadius(2)
         .backgroundColor('#3C5375')
         .margin({ top: 1 })

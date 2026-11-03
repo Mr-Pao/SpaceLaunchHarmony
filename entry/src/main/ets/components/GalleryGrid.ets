@@ -1,132 +1,172 @@
 /**
- * components/GalleryGrid.ets —— 图库瀑布流（WaterFlow + ForEach）
+ * components/GalleryGrid.ets —— 图库「横向漂移图带」+「看全部」纵向清单
  *
- * 对位小程序 pages/gallery/gallery.vue 的图墙：**三列、图与图几乎无缝**
- * （列间距 4vp、行间距 4vp）、圆角只有 6vp。小程序的「六条横带横向漂移」不搬 ——
- * 鸿蒙这边是纵向浏览的完整列表，横向漂移会让 1000+ 张的浏览变成「看一屏再滑」，
- * 不如瀑布流一屏能扫到更多张。
+ * 对位小程序 pages/gallery/gallery.vue：
+ *   · 图墙：模板 3-30 行的 .stage/.bands/.band/.track/.cell，样式段 .band / .band-t /
+ *     .track / t1..t8 / marqueeL / marqueeR / .cell / .wide / .tall / .cell-img / .cell-veil
+ *   · 清单：小程序那一页是独立的 pages/gallery-all（分类浏览器），鸿蒙侧没有这个路由，
+ *     见本文件末尾 MpAllGrid 的说明。
  *
- * ── 为什么用 ForEach 而不是 LazyForEach ──
- *   LazyForEach 要自己实现 IDataSource + 监听器分发，最坑的是「触底追加时
- *   监听器里的下标与真实数据错位」——错一次就是半屏白块，且线上难复现。
- *   本页最多 1118 张、每片 500，WaterFlow 自己有 cachedCount 做节点复用，
- *   ForEach 全量建节点的内存开销实测可接受。先把墙跑通，性能真成问题再换。
- *   如果将来要换，接口不用变：本组件对外只吃 `photos: GlPhoto[]`。
+ * ── 单位换算（rpx ÷ 2 = vp，逐条写明，方便对着 wxss 复核）──
+ *   宽带 cell 336rpx → 168vp  窄带 cell 232rpx → 116vp
+ *   cell 间距 8rpx → 4vp      cell 圆角 14rpx → 7vp
+ *   带间距 8rpx → 4vp
+ *   带高权重：.band flex 232 / .band-t flex 164（**没有换算，直接当 layoutWeight 用**，
+ *   它本来就是「占剩余高度的比例」，换成 vp 反而会在不同屏高上失真）
  *
- * ── 高度为什么由数据侧算（且必须稳定）──
- *   WaterFlow 一旦等图片解码完再撑高，整墙会从「等高」突变到「错落」，
- *   滚动位置跟着跳。所以高度在造数据时就用 id 的字符 hash 定死（heightOf），
- *   图片只做 Cover 裁切，加载前后布局完全一致。
- *   **绝不能用 Math.random()**：每次重建组件高度都变，滚动时整页抖。
+ * ── 为什么不用 animateTo 做 marquee ──
+ *   小程序是 CSS `animation: marqueeL 52s linear infinite`。
+ *   鸿蒙没有 keyframes，能做到无限循环的只有两条路：
+ *     a) animateTo({ iterations: -1 })：位移跑在渲染线程上最顺，但它**没有句柄**，
+ *        组件销毁后停不下来，也没法在 aboutToDisappear 里清 —— 违反本工程
+ *        「定时器必须清理」的硬约束；
+ *     b) 每条带自己一个 setInterval，按「总位移 ÷ 总时长 × 步长」递推 dx。
+ *   这里选 b。每条带独立计时，一次 tick 只改自己那一个 @State，
+ *   不会牵动整面墙（父级一个 tick 全墙重绘是绝对不能接受的）。
+ *   16ms ≈ 60fps；2064vp / 52s ≈ 40vp/s，每帧只走 0.63vp，肉眼是连续滑动。
  *
- * ── 点击入口 ──
- *   一律进看图器（Nav.pushPhoto）。小程序按 kind 分流（发射图进 launchInfo 的
- *   图片优先态），鸿蒙侧看图器只有一个入口，不去搬那套分流。
+ * ── 为什么位移是「算出来的半宽」而不是量出来的 ──
+ *   CSS 的 translateX(-50%) 依赖 track 的 max-content 宽度。ArkUI 没有 max-content，
+ *   所以给 Row 显式设宽 half × 2，位移量取 half：
+ *     half = 每带张数 × (cell 宽 + 间距)
+ *   数据侧把每条带的图**复制一份接在尾部**（首尾相接），位移到 -half 时画面与 0
+ *   完全重合，回弹那一瞬看不出接缝 —— 这正是 CSS -50% 的语义。
  *
- * ⚠ 本文件不打日志（纯展示、无 IO）。
+ * ── 为什么图带里不画标题、不做破图占位 ──
+ *   小程序 .cell 里只有 image + .cell-veil，没有任何文字；加了文字就不是 1:1 了。
+ *   破图占位需要一个 @State，一面墙 8 条带 × 24 格 = 192 个格子，
+ *   192 个带状态的子组件会让首屏构建明显变慢；破图时露出 #101722 的格子底色即可。
+ *
+ * ⚠ 本文件不打日志（纯展示）。
  */
 
-/** 单格最小高度（任务口径 120~200vp） */
-const H_MIN: number = 120;
-/** 单格最大高度 */
-const H_MAX: number = 200;
-/** 列间距 / 行间距：小程序实测「几乎无缝」，4vp 是肉眼刚能分开的极限 */
-const GAP: number = 4;
-/** 单格圆角：小程序只有 6vp 与直角两种，这里取 6 */
-const RADIUS: number = 6;
-/** 格子底色：图片还没解码时露出的颜色，避免纯黑方块在深色底上像「破洞」 */
-const BG_CARD: string = '#141A26';
-/** 图片加载失败时的占位底色，比卡片底色亮一档，看得出「这里有一格、只是图坏了」 */
-const BG_BROKEN: string = '#1B2230';
+/** 每条带一半的张数（小程序 PER_ROW = 12） */
+export const MP_PER_ROW: number = 12;
+/** 带数（小程序 ROWS = 8） */
+export const MP_ROWS: number = 8;
+
+/** 宽带 cell 宽 336rpx */
+const WIDE_CELL: number = 168;
+/** 窄带 cell 宽 232rpx */
+const TALL_CELL: number = 116;
+/** cell 间距 8rpx */
+const CELL_GAP: number = 4;
+/** cell 圆角 14rpx */
+const CELL_RADIUS: number = 7;
+/** 带间距 8rpx */
+const BAND_GAP: number = 4;
+/** 计时器步长（≈60fps） */
+const TICK_MS: number = 16;
+/** 格子底色（.cell 的 background: #101722） */
+const CELL_BG: string = '#101722';
+/** 清单模式单格高度。**固定值**：小程序图墙的高度来自 flex 均分，
+ *  这里不是瀑布流，不需要伪随机高度（上一版按 id 做 120~200vp 的 hash 定高，
+ *  与小程序完全无关，已删除） */
+const GRID_CELL_H: number = 120;
+/** 清单三列 */
+const GRID_COLS: number = 3;
 
 /**
  * 一张图（视图模型）。
  *
- * 不在 cell 里直接渲染原始 JSON：瀑布流要 h、点击要已解析好的 full、
- * 标题要「按 | 取后段」清洗过 —— 这些都在造数据时算一次，
- * 让 cell 的 build 里不再做字符串运算（滚动时每帧都会重跑 build）。
+ * 只留「上屏 + 点击」真正需要的 6 个字段：小程序 pool 里还有 tag / intro / credit /
+ * date，但鸿蒙侧 photo-detail 的入参只有 (url, title) 两个字段（见 routes/NavParam.ets
+ * 的 PhotoNavParam），带过去也没地方显示，所以不在这里造死字段。
+ * kind 决定点击分流：'launch' 进发射详情的看图模式，其余进通用看图器。
  */
-export class GlPhoto {
-  /** 唯一键。同一发多次出现时允许重复 id，所以 LazyForEach/ForEach 的 key 还要拼下标 */
+export class MpImage {
+  /** 发射 UUID（gallery 数据集的 id）；epic/apod/nasa 条目是 'epic-...' 之类的本地键 */
   id: string = '';
-  /** 列表里用缩略图：480px 镜像、几十 KB，弱网也能一格一格出图 */
+  /** 480px 缩略图，墙面用它 */
   thumb: string = '';
-  /** 点开交给看图器的地址（已按规则解析成原图，解析不出来等于 thumb） */
+  /** 原图，点开时交给看图器 */
   full: string = '';
-  /** 格子底部那一行字：任务名（name 按 | 取后段），没标题就不画遮罩 */
+  /** 点击后页面标题（发射名 / APOD 标题 / '地球 · DSCOVR' …） */
   title: string = '';
-  /** 伪高度，由 id 的 hash 决定；同一张图每次进页都是同一个值 */
-  h: number = H_MIN;
+  /** 'launch' | 'photo'，决定点击走哪条路由 */
+  kind: string = '';
+  /** 发射时刻 ISO，只有 kind='launch' 有值；发射详情用它兜底反查 */
+  net: string = '';
 
-  constructor(id: string, thumb: string, full: string, title: string, h: number) {
+  constructor(id: string, thumb: string, full: string, title: string, kind: string, net: string) {
     this.id = id;
     this.thumb = thumb;
     this.full = full;
     this.title = title;
-    this.h = h;
+    this.kind = kind;
+    this.net = net;
   }
 }
 
 /**
- * 由 id 算 120~200vp 的稳定伪高度。
+ * 一条带。
  *
- * 算法刻意简单：31 进制滚动 hash 取模 100000，再归一化到 [0,1) 映射到高度区间。
- * 不用 Math.random —— 那个每次调用都不一样，滚动时整页会跳；
- * 也不用图片真实宽高比 —— 那要等图下载完，加载中途必然抖一次。
+ * images 已经是「首尾相接」的 2N 张（一半是复制品），MpBandView 拿到就画。
+ * wide 同时决定两件事：cell 宽度 与 带高权重 —— wxss 里两者就是绑在同一个
+ * .band/.band-t 类上的，拆开会错位。
  */
-export function heightOf(id: string): number {
-  let h: number = 0;
-  for (let i = 0; i < id.length; i++) {
-    h = (h * 31 + id.charCodeAt(i)) % 100000;
+export class MpBand {
+  /** 2N 张（N 张原图 + N 张副本），保证位移到 -half 时无缝 */
+  images: MpImage[] = [];
+  /** true = 宽带（cell 168vp / 权重 232），false = 窄带（cell 116vp / 权重 164） */
+  wide: boolean = true;
+  /** 跑完一趟的毫秒数（t1..t8 的 52000/44000/62000/48000/56000/40000/58000/46000） */
+  durMs: number = 52000;
+  /** true = 向左（marqueeL：0 → -50%），false = 向右（marqueeR：-50% → 0） */
+  toLeft: boolean = true;
+  /** ForEach 的 key。带号天然唯一且稳定，重绘时不会重建子组件（否则动画会从头开始） */
+  key: string = '';
+
+  constructor(images: MpImage[], wide: boolean, durMs: number, toLeft: boolean, key: string) {
+    this.images = images;
+    this.wide = wide;
+    this.durMs = durMs;
+    this.toLeft = toLeft;
+    this.key = key;
   }
-  const r: number = (h % 80) / 80; // 0 .. 0.9875
-  return Math.round(H_MIN + r * (H_MAX - H_MIN));
 }
 
-// ============ 数据集形状（按 2026-11-02 线上 COS 实测字段写，全部可选） ============
+// ============ 数据集形状（按线上 COS 实测字段写，全部可选） ============
 
-/**
- * gallery 分片里的单条。
- * 实测样本：{ id, name: 'Falcon 9 Block 5 | Starlink Group 15-18', net, thumb, credit, cname }
- * 索引文件额外带 count / chunks / chunkSize / launchTotal。
- */
-export interface GlGalleryRaw {
+/** gallery 分片里的单条：{ id, name, net, thumb, credit, cname }（full 线上不一定有） */
+export interface MpGalleryRaw {
   id?: string;
   name?: string;
   net?: string;
   thumb?: string;
+  /** 原图。线上多数条目没有这个键，取不到时用 thumb 反推 _2000（见 utils/Media.ets） */
+  full?: string;
   credit?: string;
-  /** 火箭型号中文名（CI 回填），卡片不展示，留着给以后的详情条用 */
   cname?: string;
 }
 
-export interface GlGalleryPayload {
+export interface MpGalleryPayload {
   v?: number;
   dataset?: string;
   generatedAt?: string;
-  /** 全量张数（线上 1118），**不是**本片条数 —— 页头「1118 张」要的是这个 */
+  /** 全量张数（线上 1118），**不是**本片条数 */
   count?: number;
-  /** 总片数；只信这个，不信 chunk 返回的 end（见 view/GalleryView.ets 注释） */
+  /** 总片数；终止条件只信这个 */
   chunks?: number;
-  /** 每片条数（500） */
   chunkSize?: number;
-  list?: GlGalleryRaw[];
+  list?: MpGalleryRaw[];
   launchTotal?: number;
 }
 
 /**
  * nasaImages 单条。
- * 实测样本：{ id, theme, themeName, title, desc, date, center, thumb, full, nasaId, titleZh, descZh }
  *
  * ⚠ thumb 与 full 是**两个不同 hash 的地址**（thumb 480px 镜像、full 是 _1080 预设），
  *   不能像 gallery 那样用 fullImageOf(thumb) 互推 —— 推出来的 _2000 是 404。
  */
-export interface GlNasaRaw {
+export interface MpNasaRaw {
   id?: string;
   theme?: string;
   themeName?: string;
   title?: string;
   titleZh?: string;
+  desc?: string;
+  descZh?: string;
   date?: string;
   center?: string;
   thumb?: string;
@@ -134,148 +174,193 @@ export interface GlNasaRaw {
   nasaId?: string;
 }
 
-export interface GlNasaPayload {
+export interface MpNasaPayload {
   v?: number;
   dataset?: string;
   generatedAt?: string;
   count?: number;
-  list?: GlNasaRaw[];
+  list?: MpNasaRaw[];
 }
 
 /**
- * 单格。
+ * 一条漂移带。
  *
- * 单独拆成 @Component 是为了让「这一格图坏了」的 @State 只影响自己：
- * 直接在父级用一个 broken 数组，改下标 ArkUI 不观察（@State 不认 arr[i] = x），
- * 整体替换又会让整墙重建 —— 一格 404 拖垮 1000 格，不能这么写。
+ * 结构：Row（定宽 half×2）里排 2N 个 cell，整条 Row 用 translate 平移。
+ * 外面套 .clip(true) 把出屏的半个 cell 裁掉 —— 不裁的话相邻带之间会互相压边。
  */
 @Component
-struct GlCell {
-  /** 图片数据。视图模型是只读的（永不原地改），所以用普通成员 + key 保证唯一即可 */
-  photo: GlPhoto = new GlPhoto('', '', '', '', H_MIN);
-  /** 该格图片是否加载失败。只影响本格，属于局部状态 */
-  @State broken: boolean = false;
-  /** 点击。普通成员，不能用 @Prop 承载函数 */
-  onOpen: (item: GlPhoto) => void = () => {};
+export struct MpBandView {
+  /** 首尾相接后的 2N 张 */
+  @Prop images: MpImage[] = [];
+  /** 宽带 / 窄带 */
+  @Prop wide: boolean = true;
+  /** 跑完一趟的毫秒数 */
+  @Prop durMs: number = 52000;
+  /** true = 左移 */
+  @Prop toLeft: boolean = true;
+  /** 带高权重（232 / 164），由父级按 wxss 的 flex 值传入 */
+  @Prop weight: number = 232;
+  /** 最后一条带不留底边距（wxss 的 .band:last-child { margin-bottom: 0 }） */
+  @Prop isLast: boolean = false;
+  /** 点任意一格。普通成员，@Prop 不用于函数 */
+  onOpen: (item: MpImage) => void = () => {};
+
+  /** 当前位移（vp，负数向左） */
+  @State dx: number = 0;
+  /** setInterval 句柄，-1 表示没在跑 */
+  private timer: number = -1;
+
+  /** 单格宽度 */
+  private cellW(): number {
+    return this.wide ? WIDE_CELL : TALL_CELL;
+  }
+
+  /** 半宽 = 一半张数 × (格宽 + 间距)；也就是 CSS translateX(-50%) 的那个 50% */
+  private halfW(): number {
+    const n: number = Math.floor(this.images.length / 2);
+    return n > 0 ? n * (this.cellW() + CELL_GAP) : MP_PER_ROW * (this.cellW() + CELL_GAP);
+  }
+
+  aboutToAppear(): void {
+    const half: number = this.halfW();
+    // 向右跑的带起点在 -half（等价于 CSS 的 marqueeR：-50% → 0）
+    this.dx = this.toLeft ? 0 : -half;
+    // 每 tick 前进多少 vp：跑完 half 需要 durMs
+    const step: number = half / (this.durMs / TICK_MS);
+
+    this.timer = setInterval(() => {
+      if (this.toLeft) {
+        this.dx = this.dx - step;
+        // 越界立刻 +half 回位：因为 images 是首尾相接的 2N 张，
+        // 回位前后的画面逐像素相同，看不出跳变
+        if (this.dx <= -half) {
+          this.dx = this.dx + half;
+        }
+      } else {
+        this.dx = this.dx + step;
+        if (this.dx >= 0) {
+          this.dx = this.dx - half;
+        }
+      }
+    }, TICK_MS);
+  }
+
+  /** 退出 tab / 页面销毁时必须清——不清就是一个高频定时器永远在跑（工程里踩过） */
+  aboutToDisappear(): void {
+    if (this.timer >= 0) {
+      clearInterval(this.timer);
+      this.timer = -1;
+    }
+  }
 
   build() {
-    Stack({ alignContent: Alignment.Bottom }) {
-      if (this.broken) {
-        // 失败占位：不删格子。删了会让后面所有格子往前挪，正在看的图会跳走
-        Column() {
-          Text('🛰')
-            .fontSize(16)
-            .opacity(0.22)
-        }
-        .width('100%')
-        .height('100%')
-        .justifyContent(FlexAlign.Center)
-        .backgroundColor(BG_BROKEN)
-      } else {
-        Image(this.photo.thumb)
-          .width('100%')
+    // 外层是 wxss 的 `.band`：定高、裁剪、留带间距。**裁剪必须在带这一层**——
+    // 里层 track 被 translate 推到带外面时，只有带自己的 clip 会把它切掉；
+    // 若把 clip 放在 track 上，裁的是 track 自己的 4128vp 边界，等于没裁，
+    // 图会横向漫出屏幕盖到相邻区域。
+    Column() {
+      Row() {
+        ForEach(this.images, (item: MpImage, index: number) => {
+          Stack({ alignContent: Alignment.Bottom }) {
+            Image(item.thumb)
+              .width('100%')
+              .height('100%')
+              .objectFit(ImageFit.Cover)
+              .draggable(false)
+            // .cell-veil：底部 46% 压一层从透明到微暗的渐变，让图与图交界处不发灰。
+            // 纯装饰，必须放行点击，否则点格子会先命中这层
+            Column()
+              .width('100%')
+              .height('46%')
+              .linearGradient({
+                angle: 0,
+                colors: [
+                  ['#5704080E', 0.0],
+                  ['#0004080E', 1.0]
+                ]
+              })
+              .hitTestBehavior(HitTestMode.None)
+          }
+          .width(this.cellW())
           .height('100%')
-          .objectFit(ImageFit.Cover)
-          .draggable(false)
-          // 只改自己的 @State，不碰父级数组 —— 见结构体头部注释
-          .onError(() => {
-            this.broken = true;
+          .borderRadius(CELL_RADIUS)
+          // 圆角裁切只能用 clip：Stack 没有 overflow
+          .clip(true)
+          .backgroundColor(CELL_BG)
+          // 小程序用的是 inset box-shadow 描边，ArkUI 没有 inset，
+          // 用 0.5vp 的极淡描边等效（1rpx 的一半，视觉上一样是「一层内发光」）
+          .border({ width: 0.5, color: '#14FFFFFF' })
+          .margin({ right: CELL_GAP })
+          .onClick(() => {
+            this.onOpen(item);
           })
+        }, (item: MpImage, index: number) => item.id + '@' + String(index))
       }
-
-      this.caption()
+      .width(this.halfW() * 2)
+      .height('100%')
+      // translate 不参与布局：track 仍然是 2N 格的自然宽度，只是画的时候整体偏移
+      .translate({ x: this.dx })
     }
     .width('100%')
-    .height(this.photo.h)
-    .borderRadius(RADIUS)
-    // 圆角裁切用 clip：Column/Stack 上没有 overflow
+    // 左对齐：css 的 track 是从带的左边起排的。Columns 默认居中，
+    // 会让 4128vp 的 track 有一半甩到屏幕左侧、首帧看到的不是第一张
+    .alignItems(HorizontalAlign.Start)
+    // 高度由父级的 layoutWeight 分配（对位 wxss 的 flex: 232/164），
+    // 这里**不能再写 height('100%')**：两者同时存在时权重会失效，8 条带会平分高度
+    .layoutWeight(this.weight)
+    .margin({ bottom: this.isLast ? 0 : BAND_GAP })
     .clip(true)
-    .backgroundColor(BG_CARD)
-    .onClick(() => {
-      this.onOpen(this.photo);
-    })
-  }
-
-  /**
-   * 底部标题条：只有任务名，没有别的。
-   * 渐变 angle 0 = 从下往上（位置 0 是底部、不透明；1 是顶部、全透明），
-   * 与工程内 DailyCards.ets 同口径。
-   */
-  @Builder
-  caption() {
-    if (this.photo.title.length > 0) {
-      Column() {
-        Text(this.photo.title)
-          .fontSize(10)
-          .fontColor('#E8EEF8')
-          .maxLines(1)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-          .width('100%')
-      }
-      .width('100%')
-      .alignItems(HorizontalAlign.Start)
-      .padding({ left: 6, right: 6, top: 16, bottom: 5 })
-      .linearGradient({
-        angle: 0,
-        colors: [
-          ['#CC05080F', 0.0],
-          ['#6605080F', 0.6],
-          ['#0005080F', 1.0]
-        ]
-      })
-      // 纯装饰层，不吃点击，否则点格子会先命中文字条
-      .hitTestBehavior(HitTestMode.None)
-    }
   }
 }
 
 /**
- * 瀑布流。
+ * 「看全部」纵向清单。
  *
- * 用法（父级）：
- *   GalleryGrid({ photos: this.photos, colCount: 3,
- *                 onOpen: (p: GlPhoto) => { ... },
- *                 onBottom: () => { 拉下一片 } })
+ * 小程序这个入口跳的是独立页 pages/gallery-all（分类浏览器：全部/精选/NASA/视频
+ * 四个 tab）。鸿蒙侧没有这条路由，而本次任务只允许改两个文件、不允许新增页面，
+ * 所以退一步：在本页切到清单模式，把 gallery 全量分片按三列铺开。
+ * 少了分类筛选，但「看全部 N 张」这个入口与「能一路滑到 1118 张」的核心目的达成。
  *
- * `photos` 用 @Prop：父级每次分片追加都是 `concat` 出新数组，
- * @Prop 收到新引用才重建，ForEach 按 key 只补新格子，已渲染的不重排。
+ * 用固定格高（GRID_CELL_H）而不是瀑布流：小程序图墙是 flex 均分的等高带，
+ * 清单页也是等高卡片；上一版按 id 做 hash 定高（120~200vp）是凭空加的东西，已删。
  */
 @Component
-export struct GalleryGrid {
+export struct MpAllGrid {
   /** 已加载的图（父级持分片游标，本组件只管画） */
-  @Prop photos: GlPhoto[] = [];
-  /** 列数：精选 3、NASA 2 */
-  @Prop colCount: number = 3;
+  @Prop photos: MpImage[] = [];
   /** 点单格 */
-  onOpen: (item: GlPhoto) => void = () => {};
-  /** 触底。防重复请求的锁在父级（组件不持有加载状态） */
+  onOpen: (item: MpImage) => void = () => {};
+  /** 触底。防重复请求的锁在父级 */
   onBottom: () => void = () => {};
-
-  /** 列模板。写死字符串而不拼 '1fr '：ArkTS 对字符串 repeat 不友好 */
-  private template(): string {
-    return this.colCount >= 3 ? '1fr 1fr 1fr' : '1fr 1fr';
-  }
 
   build() {
     WaterFlow() {
-      // key 拼下标：同一发多次出现会出现重复 id，只用 id 会让 ForEach 吞掉重复项
-      ForEach(this.photos, (item: GlPhoto, index: number) => {
+      ForEach(this.photos, (item: MpImage, index: number) => {
         FlowItem() {
-          GlCell({
-            photo: item,
-            onOpen: (p: GlPhoto) => {
-              this.onOpen(p);
-            }
+          Stack() {
+            Image(item.thumb)
+              .width('100%')
+              .height('100%')
+              .objectFit(ImageFit.Cover)
+              .draggable(false)
+          }
+          .width('100%')
+          .height(GRID_CELL_H)
+          .borderRadius(CELL_RADIUS)
+          .clip(true)
+          .backgroundColor(CELL_BG)
+          .onClick(() => {
+            this.onOpen(item);
           })
         }
         .width('100%')
-      }, (item: GlPhoto, index: number) => item.id + '#' + String(index))
+      }, (item: MpImage, index: number) => item.id + '#' + String(index))
     }
-    .columnsTemplate(this.template())
-    .columnsGap(GAP)
-    .rowsGap(GAP)
-    // 预取 2 屏：3 列 × 6 ≈ 一屏出头，再多会白占内存（缩略图常驻）
-    .cachedCount(6)
+    .columnsTemplate(GRID_COLS >= 3 ? '1fr 1fr 1fr' : '1fr 1fr')
+    .columnsGap(CELL_GAP)
+    .rowsGap(CELL_GAP)
+    // 预取 4 行：三列 × 4 = 一屏出头，再多缩略图会常驻白占内存
+    .cachedCount(12)
     .width('100%')
     .height('100%')
     .scrollBar(BarState.Off)

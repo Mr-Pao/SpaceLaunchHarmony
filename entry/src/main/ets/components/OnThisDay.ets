@@ -1,14 +1,12 @@
 /**
  * components/OnThisDay.ets —— 今日页「往年今日」区块
  *
- * 对位小程序：pages/today/today.vue 的「往年今日」区块
- *   template   81-95    （.sec-head 区块头 + .more-inline 折叠入口）
- *   template   99-116   （.otd / .otd-item / .otd-img / .otd-body 三行）
- *   script    205, 238  （const OTD_FOLD = 3；data.otdOpen = false）
- *   script    363-378   （otd 计算属性：title / meta / yearsAgo 的映射口径）
- *   script    381-383   （otdShown()：折叠时 slice(0, OTD_FOLD)）
- *   style     766-808   （.sec-head / .sec-title / .sec-sub / .sec-acts / .more-inline / .more-arrow）
- *   style    1080-1180  （.otd / .otd-item / .otd-hover / .otd-img / .otd-ph / .otd-body /
+ * 对位小程序：pages/today/today.vue
+ *   template   75-116   （.sec-head 区块头 + .sec-acts 折叠入口；.otd-item 三行）
+ *   script     205, 238 （const OTD_FOLD = 3；otdOpen = false）
+ *   script     363-383  （otd 计算属性的 title / meta / yearsAgo 映射口径；otdShown()）
+ *   style      766-808  （.sec-head / .sec-title / .sec-sub / .sec-acts / .more-inline / .more-arrow）
+ *   style      1080-1180（.otd / .otd-item / .otd-hover / .otd-img / .otd-ph / .otd-body /
  *                        .otd-year / .otd-name / .otd-meta）
  *
  * 换算：rpx ÷ 2 = vp
@@ -16,25 +14,29 @@
  *   条目内边距 16rpx → 8vp；条间距 14rpx → 7vp；标题 34rpx → 17vp；
  *   年份/元信息 21rpx → 10.5vp；任务名 26rpx → 13vp；副标题 22rpx → 11vp
  *
- * 有意差异（相对 today.vue）：
- *   1. **数据由父级通过 `list` 传入**，组件不自己取数、也不自己算 otd 计算属性。
- *      today.vue 里 title/meta/yearsAgo 的映射口径原样搬进本组件（titleText/metText/yearText），
- *      保证同样的 JSON 进来长得一样。
- *   2. 元信息比原模板**多显示 status 与 site**（任务书要求四者都显示）。
- *      原 vue 只拼 `rocket · agency`；这里按 `rocket · agency · site` 拼接，
- *      status 单独放在年份那一行末尾（它是状态，和机构/地点不同类，混在一行会被读成一句）。
- *      **任一字段为空直接跳过，不产生 " · · " 这种空分隔符**。
- *   3. 折叠入口文案：原 vue 是「更多 N 条 ›」，任务书要求「展开/收起」，从任务书。
- *      箭头用 `›` 加 rotate 90° 表达展开态（原 vue 用 rotate(-90deg)，方向相反，
- *      因为原 vue 的箭头展开时朝上、这里朝下更符合「已展开」的直觉）。
- *   4. 原 vue 的 `hover-class="otd-hover"`（背景变 #1b2231）用 `onTouch` 的按下态实现，
- *      按下时整条 opacity 0.92（任务书指定），不回改背景色 —— 深色底上改背景的
- *      对比度太弱，看不出反馈。**没有引入 stateStyles**（本工程既有代码未用过，不冒险）。
- *   5. 点击只回调 `onSelect`，跳转由父级接入（原 vue 是 rowClick 直接 navigateTo）。
- *   6. 空数据渲染「暂无往年今日记录」占位块（原 vue 用 v-if 整块隐藏，
- *      组件自己拿不到父级上下文，只能自己兜底，否则父级漏判就是空白区）。
+ * ── 本轮按小程序对齐的改动（逐条对应审计项）──
+ *   1. **折叠文案改回「收起 / 更多 N 条 ›」**。today.vue 是
+ *      `{{ otdOpen ? '收起' : '更多 ' + (otd.length - OTD_FOLD) + ' 条' }}`，
+ *      之前写成分两段的「展开」+「N 条」是自创文案。
+ *   2. **箭头方向改回 rotate(-90deg)**：today.vue 的 `.more-arrow.is-up` 是
+ *      `transform: rotate(-90deg)`，即展开时箭头朝上；之前写成 +90°（朝下）方向反了。
+ *   3. **元信息去掉 site**：wxss/today.vue 的 otd 计算属性只拼 `rocket · agency`，
+ *      地点是自创字段。字段仍在 model 里，只是这一行不显示。
+ *   4. **去掉年份行末尾的 status**：today.vue 的第一行只有「N 年前的今天」，
+ *      没有状态串；状态在发射详情页才有。
  *
- * ⚠ 本文件不使用 console.*，日志一律 hilog。
+ * ── 保留的既有取舍 ──
+ *   A. 数据由父级通过 `list` 传入，组件不自己取数、也不自己算 otd 计算属性；
+ *      title / meta / yearsAgo 的映射口径原样搬进来（titleText / metaText / yearText），
+ *      保证同样的 JSON 进来长得一样。
+ *   B. 原 vue 的 `hover-class="otd-hover"`（背景变 #1b2231）用 onTouch 按下态实现，
+ *      按下时整条 opacity 0.92。深色底上改背景色的对比度太弱，看不出反馈；
+ *      且本工程既有代码没用过 stateStyles，不冒险。
+ *   C. 点击只回调 onSelect，跳转由父级接入（原 vue 是 goLaunch 直接 navigateTo）。
+ *   D. 空数据整块不渲染（对位 `v-if="otd.length"`）：页面已经有整页空态兜底，
+ *      这里再画一个占位块就是「空态叠空态」，故 build 里直接返回空 Column。
+ *
+ * ⚠ 本文件不使用 console.*；只在折叠切换时记一条 hilog.debug。
  */
 
 import { hilog } from '@kit.PerformanceAnalysisKit';
@@ -52,7 +54,7 @@ const PRESSED_OPACITY: number = 0.92;
 
 @Component
 export struct OnThisDay {
-  /** 往年今日列表。父级没数据就传空数组，走占位块 */
+  /** 往年今日列表。父级没数据就传空数组，整块不渲染 */
   @Prop list: OnThisDayItem[] = [];
   /** 是否已展开 */
   @State expanded: boolean = false;
@@ -68,7 +70,7 @@ export struct OnThisDay {
   /** 点击某条的回调。函数类型成员不加 @Prop，普通成员 + 默认空实现 */
   onSelect: (item: OnThisDayItem) => void = () => {};
 
-  // ============ 展示口径（搬自 today.vue:363-378） ============
+  // ============ 展示口径（搬自 today.vue:363-383） ============
 
   /** title = nameZh || name || '未命名任务' */
   private titleText(item: OnThisDayItem): string {
@@ -105,30 +107,21 @@ export struct OnThisDay {
     return this.yearsAgo(item).toString() + ' 年前的今天';
   }
 
-  /** 状态：扁平字符串，没有就返回空 */
-  private statusText(item: OnThisDayItem): string {
-    return strOf(item.status);
-  }
-
   /**
-   * 元信息：rocket · agency · site，空字段直接跳过。
+   * 元信息：rocket · agency，空字段直接跳过（对位 otd 计算属性，**不含 site**）。
    *
    * 不用 `[a,b,c].filter(Boolean).join()` 那种写法 —— ArkTS 里数组字面量
-   * 必须先有显式类型，手写三段判断反而更直白。
+   * 必须先有显式类型，手写判断反而更直白。
    */
   private metaText(item: OnThisDayItem): string {
     const parts: string[] = [];
     const rocket: string = strOf(item.rocket);
     const agency: string = strOf(item.agency);
-    const site: string = strOf(item.site);
     if (rocket.length > 0) {
       parts.push(rocket);
     }
     if (agency.length > 0) {
       parts.push(agency);
-    }
-    if (site.length > 0) {
-      parts.push(site);
     }
     return parts.join(' · ');
   }
@@ -148,7 +141,8 @@ export struct OnThisDay {
     if (net.length > 0) {
       return net;
     }
-    return 'otd_' + item.y + '_' + index;
+    // ArkTS 不做 number → string 的隐式转换，拼接一律显式 String()
+    return 'otd_' + String(item.y) + '_' + String(index);
   }
 
   /** 折叠时只给前 OTD_FOLD 条（对位 otdShown()） */
@@ -173,8 +167,16 @@ export struct OnThisDay {
     return this.list.length > OTD_FOLD;
   }
 
+  /**
+   * 折叠入口文案。today.vue：
+   *   otdOpen ? '收起' : '更多 ' + (otd.length - OTD_FOLD) + ' 条'
+   * 收起态条数直接编进文案，不再另挂一个「N 条」文本。
+   */
   private toggleText(): string {
-    return this.expanded ? '收起' : '展开';
+    if (this.expanded) {
+      return '收起';
+    }
+    return '更多 ' + this.hiddenCount().toString() + ' 条';
   }
 
   // ============ 区块头 ============
@@ -186,7 +188,7 @@ export struct OnThisDay {
         .fontSize(17) // 34rpx ÷ 2
         .fontWeight(FontWeight.Bold)
         .fontColor('#FFFFFF')
-        .letterSpacing(0.5)
+        .letterSpacing(0.5) // 1rpx ÷ 2
 
       Text(this.countText())
         .fontSize(11) // 22rpx ÷ 2
@@ -208,16 +210,9 @@ export struct OnThisDay {
             .fontSize(11.5)
             .fontColor('#38BDF8')
             .margin({ left: 2 }) // 4rpx ÷ 2
-            // 展开态箭头朝下，收起态朝右
-            .rotate({ angle: this.expanded ? 90 : 0 })
-
-          if (!this.expanded) {
-            Text(this.hiddenCount().toString() + ' 条')
-              .fontSize(10.5)
-              .fontColor('#55617A')
-              .margin({ left: 4 })
-              .maxLines(1)
-          }
+            // 对位 `.more-arrow.is-up { transform: rotate(-90deg) }`：
+            // 收起态箭头朝右（0°）、展开态朝上（-90°）
+            .rotate({ angle: this.expanded ? -90 : 0 })
         }
         .alignItems(VerticalAlign.Center)
         // 上下各留 3vp，把可点区域撑到约 40vp，别让 11vp 的字直接当热区
@@ -263,38 +258,25 @@ export struct OnThisDay {
       }
 
       Column() {
-        // 第一行：年份 + 状态（状态缺省就不占位）
-        Row() {
-          Text(this.yearText(item))
-            .fontSize(10.5) // 21rpx ÷ 2
-            .fontColor('#F5C33B')
-            .letterSpacing(0.5)
-            .maxLines(1)
-
-          if (this.statusText(item).length > 0) {
-            Text(this.statusText(item))
-              .fontSize(10)
-              .fontColor('#7A8598')
-              .margin({ left: 5 })
-              .maxLines(1)
-              .textOverflow({ overflow: TextOverflow.Ellipsis })
-              .layoutWeight(1)
-          }
-        }
-        .width('100%')
-        .alignItems(VerticalAlign.Center)
+        // 第一行只有年份，没有状态串（见文件头第 4 条）
+        Text(this.yearText(item))
+          .fontSize(10.5) // 21rpx ÷ 2
+          .fontColor('#F5C33B')
+          .letterSpacing(0.5) // 1rpx ÷ 2
+          .maxLines(1)
+          .width('100%')
 
         Text(this.titleText(item))
           .fontSize(13) // 26rpx ÷ 2
           .fontWeight(FontWeight.Medium)
           .fontColor('#FFFFFF')
-          .lineHeight(18)
+          .lineHeight(18) // 26rpx × 1.34 ÷ 2 ≈ 17.4
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
           .width('100%')
           .margin({ top: 2 }) // 4rpx ÷ 2
 
-        // 元信息：火箭 · 机构 · 地点，全空就整行不画
+        // 元信息：火箭 · 机构，全空就整行不画
         if (this.metaText(item).length > 0) {
           Text(this.metaText(item))
             .fontSize(10.5) // 21rpx ÷ 2
@@ -302,7 +284,7 @@ export struct OnThisDay {
             .maxLines(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
             .width('100%')
-            .margin({ top: 2 })
+            .margin({ top: 2 }) // 4rpx ÷ 2
         }
       }
       .layoutWeight(1)
@@ -317,7 +299,7 @@ export struct OnThisDay {
     .borderRadius(9) // 18rpx ÷ 2
     .border({ width: 1, color: '#0FFFFFFF' }) // 1rpx rgba(255,255,255,0.06)
     .margin({ bottom: 7 }) // 14rpx ÷ 2
-    // 按下态：整条降透明度（见文件头「有意差异 4」）
+    // 按下态：整条降透明度（见文件头取舍 B）
     .opacity(this.pressedId === this.keyOf(item, index) ? PRESSED_OPACITY : 1.0)
     .onTouch((event: TouchEvent) => {
       const k: string = this.keyOf(item, index);
@@ -334,43 +316,20 @@ export struct OnThisDay {
     })
   }
 
-  // ============ 空数据占位 ============
-
-  @Builder
-  emptyBlock() {
-    Column() {
-      Text('暂无往年今日记录')
-        .fontSize(12)
-        .fontColor('#7A8598')
-      Text('这一天还没有历史发射数据')
-        .fontSize(10.5)
-        .fontColor('#55617A')
-        .margin({ top: 4 })
-    }
-    .width('100%')
-    .padding({ top: 22, bottom: 22 }) // 44rpx ÷ 2
-    .justifyContent(FlexAlign.Center)
-    .alignItems(HorizontalAlign.Center)
-    .backgroundColor('#141A26')
-    .borderRadius(9)
-    .border({ width: 1, color: '#0FFFFFFF' })
-  }
-
   build() {
+    // 空列表整块不渲染（对位 `v-if="otd.length"`）：页面有整页空态兜底，
+    // 这里再画占位块就是空态叠空态。根节点仍是唯一 Column，只是高度 0、margin 0。
     Column() {
-      this.header()
-
       if (this.list.length > 0) {
+        this.header()
         // key 用 id 优先的唯一串；ForEach 第三参给 key 生成器是 ArkTS 硬约束
         ForEach(this.visibleList(), (item: OnThisDayItem, index: number) => {
           this.itemCell(item, index)
         }, (item: OnThisDayItem, index: number) => this.keyOf(item, index))
-      } else {
-        this.emptyBlock()
       }
     }
     .width('100%')
     .alignItems(HorizontalAlign.Start)
-    .margin({ bottom: 15 }) // 30rpx ÷ 2
+    .margin({ bottom: this.list.length > 0 ? 10 : 0 }) // 20rpx ÷ 2
   }
 }

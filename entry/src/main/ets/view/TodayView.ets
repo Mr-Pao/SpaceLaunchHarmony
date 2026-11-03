@@ -1,40 +1,46 @@
 /**
- * view/TodayView.ets —— 「今日」tab（1:1 复刻 pages/today/today.vue）
+ * view/TodayView.ets —— 「今日」tab（按 pages/today/today.vue 逐块对齐）
  *
  * 结构（自上而下，全部压在 StarField 星空层之上）：
- *   顶部日期行 → 每日一览三卡（sl / apod / epic 横滑，DailyCards 自带轮播）→
- *   「下次发射」大卡（含秒级倒计时，NextLaunch 自带标题）→
- *   「往年今日」→「此刻在天上」→「航天资讯」（limit=3）→ 底部 padding 92vp。
+ *   日期行 → 每日一览三卡（sl / apod / epic 横滑）→ 「下次发射」大卡 →
+ *   「往年今日」→「此刻在天上」→「航天资讯」→ 四路全空时的整页空态 → 底部让位。
+ *   五个子组件各自带区块标题，页面这层不重复画标题，只保留顶部日期行这一处自绘文本。
  *
- * 注意：五个子组件**各自带区块标题**（17vp Bold 白 + 11vp 灰副标题），
- * 页面这一层不再重复画「下次发射 / 往年今日 / 此刻在天上 / 航天资讯」这四个标题，
- * 否则会标题叠标题。页内只保留顶部日期行这一处自绘文本。
+ * ── 本轮对齐 today.vue 做的改动（逐条对应审计项）──
+ *   1. **整页空态**（today.vue:165-173）。四路（dailyCards / astronauts / next / otd）
+ *      全空时出 🛰️ + 「今天的数据还没准备好」+「重新加载」胶囊按钮；
+ *      还在加载时文案换成「正在拉取今日数据…」且不画按钮 —— 与小程序同一套条件。
+ *   2. **下拉刷新**（today.vue 的 enablePullDownRefresh + onPullDownRefresh）。
+ *      用 Refresh 包住列表，onRefreshing 里重跑 loadAll(true)（七路全 force）；
+ *      七路全部 settle 之后再把 refreshing 归位，否则转圈会在数据到齐前提前收掉。
+ *   3. **「更多发射」真跳转**（today.vue 的 goFeed → uni.switchTab('/pages/index/index')）。
+ *      子视图拿不到宿主的 TabsController，故照 FAV_VERSION_KEY 的既有广播范式：
+ *      TodayView 往 AppStorage 写 TAB_REQUEST_KEY，Index.ets 订阅后 changeIndex。
+ *      写入值是「序号 × 10 + tab 下标」——必须让每次写入都变（连点两次同一个 tab
+ *      也要生效），纯写下标会被 @Watch 的同值去重吞掉。
+ *   4. **删掉页头副标题**（today.vue 的 .nav-row 里只有一行 .nav-date）。
+ *   5. **apod / epic 卡不再带摘要**：小程序 dailyCards 里 desc 恒为 ''，
+ *      .daily-desc 永远不渲染；正文只进详情层。故构造卡时 desc 传空串。
+ *   6. **触底加载**（today.vue 的 onReachBottom → news.loadMore()）。
+ *      外层滚动容器改成 List 就是为了拿 onReachEnd —— 工程里 onReachEnd 只在
+ *      List/WaterFlow 上用过，Scroll 上没有先例，不赌它的签名。触底只发一个自增信号，
+ *      展开量仍由 NewsSection 自己夹（它知道 list 长度与步长）。
+ *   7. **「更多图片」按类型分流**（today.vue 的 moreImgs）。小程序是
+ *      sl→gallery-all?tab=image、apod→?tab=astro、epic→?tab=earth；
+ *      鸿蒙侧没有 gallery-all 这个分类浏览器页（图库主 tab 只有「精选 / NASA」两段），
+ *      所以三类统一落到「图库」tab。**这不是逐字节复刻**，只保证「点了有去处」，
+ *      等 GalleryView 补上分类段再细化。
+ *   8. 页头字重 Bold；其余颜色/字号按 today.vue 的 rpx ÷ 2 取。
  *
- * 数据链路（语义与 utils/data.js 的 load 对齐：谁先到谁先渲染，不 Promise.all 等齐）：
+ * ── 数据链路（语义与 utils/data.js 的 load 对齐：谁先到谁先上屏）──
  *   gallery            → 过滤 thumb 非空 → pickDaily(list, daySeed(Date.now())) 选每日一图
  *   astronautsInspace  → 过滤 inSpace → 按 days 降序
- *   upcoming(onUpdate) → next() 取「net 非空且时刻 > now」的最早一条
+ *   upcoming(onUpdate) → nextLaunch() 取「net 非空且时刻 > now」的最早一条
  *   onthisday(onUpdate)→ 透传 OnThisDay
- *   apod(onUpdate)     → 取 list[0]（滤掉 NASA 的降级占位脏数据）
- *   epic(onUpdate)     → 取 list[0]
- *   news(onUpdate)     → 透传 NewsSection（组件只吃 list，所以由页面拉）
+ *   apod(onUpdate)     → 过滤 NASA 降级占位后取 [0]
+ *   epic(onUpdate)     → 取 [0]
+ *   news(onUpdate)     → 透传 NewsSection
  * 每一路各自 catch，一路失败只影响自己，不拖垮整页。
- *
- * ── 相对任务书的取舍/偏差（逐条写清，方便复核）──
- *   1. **多了一路 news 加载**。任务书写「6 路各自独立 load」，但 NewsSection 的契约是
- *      `@Prop list: NewsItem[]`（组件自己不取数，见 components/NewsSection.ets:47-55），
- *      不拉 news 这一块永远空着。故按第 7 路独立加载，同样自带 catch、同样接 onUpdate。
- *   2. **apod 多一道脏数据过滤**。小程序 applyApod() 会丢掉 title === 'NASA Science'
- *      以及命中 `/wp-content/themes/` 的地址（nasa-daily 降级时的占位响应）。
- *      照抄会让「每日天文」卡变成破图，故保留这道过滤，其余取 [0] 的口径不变。
- *   3. **无路由**。全工程没有 router / Navigation / NavDestination，回调无处跳转；
- *      onOpen / onMore / onSelect / onViewAll 一律 hilog 记一条 + TODO 注释，
- *      等宿主层接上路由后把 logAction(...) 换成真实跳转即可。
- *   4. **每日一图用缩略图**（对位 dailyCards 的 `src: d.thumb`）。小程序在 photo-detail
- *      里才升到 fullImageOf 原图，鸿蒙侧还没有详情页，首屏就该用几十 KB 的缩略图。
- *   5. **三卡顺序按任务书 sl → apod → epic**。today.vue 的注释写的是
- *      「sl → epic → apod」但代码实际按 pushed 顺序是 sl → apod → epic（today.vue:312-338），
- *      两者一致，按代码口径。
  *
  * ⚠ 本文件不使用 console.*，日志一律 hilog。
  */
@@ -57,42 +63,54 @@ import { NewsItem, NewsPayload, NewsLaunchRef } from '../model/News';
 import { Nav } from '../routes/Nav';
 import { LaunchNavParam, PhotoNavParam, ArticleNavParam, AstronautNavParam } from '../routes/NavParam';
 
+/**
+ * 「请求切到某个 tab」的广播键。
+ *
+ * 为什么定义在这里而不是 routes/Nav.ets：写方只有今日页，读方只有 Index.ets，
+ * 而 Index 本来就要 import TodayView，放在这里不会多一条依赖边；
+ * 反过来 TodayView 若 import Index 就是循环依赖。
+ *
+ * 值编码见 requestTab()：raw = 序号 × 10 + tab 下标，读方用 raw % 10 取下标。
+ */
+export const TAB_REQUEST_KEY: string = 'sl_tab_request';
+
+/** tab 下标，与 Index.ets 的 TabContent 顺序严格一致 */
+export const TAB_LAUNCH: number = 1;
+export const TAB_GALLERY: number = 2;
+
+/** 编码基数：序号 × 10 + 下标（下标只有 0~4，10 够用） */
+const TAB_SEQ_BASE: number = 10;
+
 const DOMAIN: number = 0x0000;
 const TAG: string = 'TodayView';
 
-/** 页面底色（与 Index.ets / EntryAbility 的窗口底色同一值，避免首帧色差） */
+/** 页面底色（与 Index.ets / EntryAbility 的窗口底色同值，避免首帧色差） */
 const BG_PRIMARY: string = '#0A0E17';
 
 /**
  * 时钟节拍：30 秒一次。
- * 只服务 next() 的重算 —— 倒计时本身由 Countdown 组件内部每秒自转，
+ * 只服务 nextLaunch() 的重算 —— 倒计时本身由 Countdown 组件内部每秒自转，
  * 页面不该每秒 rebuild 一次整棵子树。
  */
 const TICK_MS: number = 30000;
 
 /**
  * 底部内边距：悬浮胶囊让位。
- *
- * 胶囊本体 58 + 底部 margin 20 = 78，再加胶囊下方那层渐变遮罩的渐入高度
- * （FloatingTabBar 里 padding.top 28）。原先只留 92，滚到底时「往年今日」的
- * 最后一条会被胶囊压掉半行（2026-11-02 截图确认），改成 120 留出余量。
+ * 胶囊本体 58 + 底部 margin 20 = 78，再加渐变遮罩渐入高度（FloatingTabBar 的 padding.top 28）。
+ * 留 92 时滚到底最后一条会被压掉半行（2026-11-02 截图确认），故 120。
  */
 const BOTTOM_PAD: number = 120;
 
-/** 页面左右内边距（任务书视觉规范 12vp） */
+/** 页面左右内边距（工程约定 12vp） */
 const PAGE_PAD: number = 12;
 
-/** 资讯首屏条数（任务书要求 limit=3） */
+/** 资讯首屏条数（对位 `<news-section :limit="3" />`） */
 const NEWS_LIMIT: number = 3;
 
-/**
- * 独立加载的路数。
- * 6 路（gallery/astronauts/upcoming/onthisday/apod/epic）+ 1 路 news = 7，
- * 全部结束后才把 loading 置 false（只影响顶部那句「正在加载…」）。
- */
+/** 独立加载的路数：六路 + 资讯 = 7 */
 const LOAD_TOTAL: number = 7;
 
-/** apod 降级占位响应的识别特征（见文件头「取舍 2」） */
+/** apod 降级占位响应的识别特征 */
 const WP_THEME_RE: RegExp = new RegExp('/wp-content/themes/');
 
 /**
@@ -109,18 +127,20 @@ const EMPTY_LAUNCH: LaunchSummary = {
 export struct TodayView {
   // ============ 状态 ============
 
-  /** 30 秒一拍的时钟，next() 用它判断「还没发射」 */
+  /** 30 秒一拍的时钟，nextLaunch() 用它判断「还没发射」 */
   @State nowTick: number = Date.now();
   /** 顶部日期行文案（「11月2日 星期日」）。跨零点时随 tick 一起更新 */
   @State today: string = todayLabel();
-  /** 是否还在等数据（只用于顶部副标题文案，不挡渲染） */
+  /** 是否还在等数据（空态文案 + 骨架屏之外的一处提示） */
   @State loading: boolean = true;
+  /** 下拉刷新中。Refresh 的双向绑定变量，必须进 @State */
+  @State refreshing: boolean = false;
 
   /** 图库（已过滤 thumb 非空） */
   @State gallery: GalleryItem[] = [];
   /** 在轨宇航员（已过滤 inSpace，已按 days 降序） */
   @State astronauts: AstronautCard[] = [];
-  /** 待发射列表（全量 100 条，next() 每次只挑一条） */
+  /** 待发射列表（全量 100 条，nextLaunch() 每次只挑一条） */
   @State upcoming: LaunchSummary[] = [];
   /** 往年今日 */
   @State otd: OnThisDayItem[] = [];
@@ -128,19 +148,28 @@ export struct TodayView {
   @State apod: ApodItem[] = [];
   /** 每日地球 */
   @State epic: EpicItem[] = [];
-  /** 资讯（NewsSection 自己只做「露几条」的折叠，数据由页面给） */
+  /** 资讯（NewsSection 只做「露几条」的折叠，数据由页面给） */
   @State news: NewsItem[] = [];
 
-  /** 交给 DailyCards 的三张卡（sl → apod → epic）。@State 整体替换才能触发重绘 */
+  /** 交给 DailyCards 的三张卡（sl → apod → epic）。@State 整体替换才触发重绘 */
   @State dailyCards: DailyCardItem[] = [];
+
+  /**
+   * 触底自增信号。每 +1 让 NewsSection 多露一批。
+   *
+   * 为什么不把 shown 提到页面：展开量是纯视图态，只有组件自己知道步长与上限；
+   * 页面每次列表重排都要读它，反而多一次跨层依赖。这里只发「再来一点」的意图。
+   */
+  @State newsGrow: number = 0;
 
   // ============ 私有成员（不参与渲染） ============
 
-  private scroller: Scroller = new Scroller();
   /** 30 秒节拍器句柄。-1 表示没在跑 */
   private tickTimer: number = -1;
   /** 还没结束的加载路数 */
   private pending: number = 0;
+  /** 切 tab 请求序号：保证同值连发也能触发宿主的 @Watch */
+  private tabSeq: number = 0;
 
   // ============ 生命周期 ============
 
@@ -201,12 +230,15 @@ export struct TodayView {
     this.loadNews(force);
   }
 
-  /** 一路收尾：全部结束才关 loading */
+  /** 一路收尾：全部结束才关 loading / 停下拉转圈 */
   private settle(): void {
     this.pending = this.pending - 1;
     if (this.pending <= 0) {
       this.pending = 0;
       this.loading = false;
+      // 下拉手势已经结束、数据也到齐了，才把 refreshing 交还给 Refresh，
+      // 提前归位会让转圈在内容还是旧的时候消失，看起来像「没刷新」。
+      this.refreshing = false;
     }
   }
 
@@ -304,10 +336,7 @@ export struct TodayView {
       });
   }
 
-  /**
-   * apod：接 onUpdate。
-   * force 分支本身不回传，但命中缓存时 onUpdate 才能把后台刷新的结果补上屏。
-   */
+  /** apod：接 onUpdate。force 分支本身不回传，命中缓存时 onUpdate 才能把后台结果补上屏 */
   private loadApod(force: boolean): void {
     const opts: LoadOptions<ApodPayload> = {
       force: force,
@@ -349,7 +378,7 @@ export struct TodayView {
       });
   }
 
-  /** news：见文件头「取舍 1」，组件不吃网络，必须页面拉 */
+  /** news：组件不吃网络，必须页面拉 */
   private loadNews(force: boolean): void {
     const opts: LoadOptions<NewsPayload> = {
       force: force,
@@ -371,7 +400,7 @@ export struct TodayView {
 
   /**
    * apod 落地：前台返回值与后台 onUpdate 都走这里，保证同一套过滤。
-   * 过滤规则见文件头「取舍 2」。
+   * 丢掉 title === 'NASA Science'（上游降级时的占位）与命中 /wp-content/themes/ 的破图地址。
    */
   private applyApod(data: ApodPayload): void {
     const raw: ApodItem[] = data.list !== undefined ? data.list : [];
@@ -394,7 +423,7 @@ export struct TodayView {
 
   // ============ 每日一览三卡 ============
 
-  /** a 优先，空则退 b（对应原写的 `x.titleZh || x.title`） */
+  /** a 优先，空则退 b（对应 `x.titleZh || x.title`） */
   private firstOf(a: string | undefined, b: string | undefined): string {
     const va: string = strOf(a);
     if (va.length > 0) {
@@ -405,9 +434,7 @@ export struct TodayView {
 
   /**
    * 重建三张每日卡，顺序固定 sl → apod → epic。
-   *
-   * 三路数据谁后到都要重算一次（缩略图那路可能最慢），所以这里是幂等的：
-   * 每次都从当前 @State 全量拼一遍，再整体替换数组。
+   * 三路数据谁后到都要重算一次（缩略图那路可能最慢），所以每次全量拼一遍再整体替换。
    */
   private rebuildCards(): void {
     const cards: DailyCardItem[] = [];
@@ -449,13 +476,18 @@ export struct TodayView {
       strOf(daily.thumb),
       credit.length > 0 ? '@' + credit : ''
     );
-    // 构造器只有 7 个参数，发射定位字段写后赋值（与今日页 openPhoto 的入参对应）
+    // 构造器只有 7 个参数，发射定位字段写后赋值（与 openDailyCard 的入参对应）
     card.launchId = strOf(daily.id);
     card.net = strOf(daily.net);
     cards.push(card);
   }
 
-  /** 每日天文：只取 [0]；正文直接进 desc（小程序把它收进了 intro 详情层） */
+  /**
+   * 每日天文：取 [0]。
+   * desc 传空串 —— 小程序 dailyCards 里 apod 的 desc 恒为 ''，`.daily-desc`
+   * （v-if="c.desc"）永远不渲染，正文只在 photo-detail 里出现。
+   * 之前把 explanation 塞进 desc，卡片上就多出三行摘要，与小程序不一致。
+   */
   private pushApodCard(cards: DailyCardItem[]): void {
     if (this.apod.length === 0) {
       return;
@@ -467,14 +499,14 @@ export struct TodayView {
       '每日天文',
       strOf(x.date),
       this.firstOf(x.titleZh, x.title),
-      this.firstOf(x.explanationZh, x.explanation),
+      '',
       thumb.length > 0 ? thumb : strOf(x.full),
       strOf(x.credit)
     );
     cards.push(card);
   }
 
-  /** 每日地球：date 只留 YYYY-MM-DD（数据里可能带时刻），标题与署名写死 */
+  /** 每日地球：date 只留 YYYY-MM-DD（数据里可能带时刻），标题与署名写死；desc 同 apod 传空 */
   private pushEpicCard(cards: DailyCardItem[]): void {
     if (this.epic.length === 0) {
       return;
@@ -486,7 +518,7 @@ export struct TodayView {
       '每日地球',
       strOf(x.date).slice(0, 10),
       '地球 · DSCOVR',
-      this.firstOf(x.captionZh, x.caption),
+      '',
       thumb.length > 0 ? thumb : strOf(x.full),
       'NASA EPIC'
     );
@@ -522,6 +554,21 @@ export struct TodayView {
     return best === null ? EMPTY_LAUNCH : best;
   }
 
+  /** 有没有下一次发射（空态条件要用，避免 build 里重复调 nextLaunch） */
+  private hasNext(): boolean {
+    return strOf(this.nextLaunch().id).length > 0;
+  }
+
+  /**
+   * 整页空态条件，逐字对位 today.vue：
+   *   v-if="!daily && !inSpace.length && !next && !otd.length"
+   * daily 是 dailyCards 数组（三张卡都没凑出来才算空）。
+   */
+  private isEmpty(): boolean {
+    return this.dailyCards.length === 0 && this.astronauts.length === 0 &&
+      !this.hasNext() && this.otd.length === 0;
+  }
+
   // ============ 交互（A1 路由：直接调全局 Nav 门面） ============
 
   private logAction(action: string, key: string): void {
@@ -529,7 +576,18 @@ export struct TodayView {
   }
 
   /**
-   * 每日卡点击：
+   * 广播「请宿主切到第 index 个 tab」。
+   *
+   * 值 = 序号 × 10 + 下标：@Watch 对同值不触发，纯写下标时「连点两次更多发射」
+   * 第二次会失效；带上自增序号则每次都是新值。
+   */
+  private requestTab(index: number): void {
+    this.tabSeq = this.tabSeq + 1;
+    AppStorage.setOrCreate(TAB_REQUEST_KEY, this.tabSeq * TAB_SEQ_BASE + index);
+  }
+
+  /**
+   * 每日卡点击（对位 openCard）：
    *   sl 卡（每日一图）→ 发射详情页，带 launchId + net
    *   apod / epic    → 图片详情页（src 非空才有图可看）
    */
@@ -546,17 +604,16 @@ export struct TodayView {
   }
 
   /**
-   * 「更多图片」：同样进看图器。
+   * 「更多图片」（对位 moreImgs）。
    *
-   * 小程序这里进的是图库对应分类（apod → nasa tab，epic → earth tab）；
-   * 鸿蒙侧图库页还没做，先统一落到看图器，等 GalleryView 成型再改成切 tab。
+   * 小程序三类各进 gallery-all 的不同分类（image / astro / earth）；
+   * 鸿蒙侧没有 gallery-all 这个分类浏览器页，图库主 tab 只有「精选 / NASA」两段，
+   * 所以统一切到「图库」tab。**不是逐字节复刻**，只保证点了有去处；
+   * 等 GalleryView 补上分类段（或在广播里带上子分类）再细分。
    */
   private openDailyMore(item: DailyCardItem): void {
-    if (item.src.length > 0) {
-      Nav.pushPhoto(new PhotoNavParam(item.src, item.title));
-      return;
-    }
-    this.logAction('每日卡更多图片无图 type=' + item.type, item.title);
+    this.logAction('更多图片 → 图库 tab type=' + item.type, item.title);
+    this.requestTab(TAB_GALLERY);
   }
 
   private openLaunch(item: LaunchSummary): void {
@@ -585,14 +642,10 @@ export struct TodayView {
     return strOf(item.name);
   }
 
-  /**
-   * 「更多发射」：本应切到「发射」tab。
-   *
-   * 切 tab 是宿主 Index 的能力，子视图拿不到 TabsController；
-   * 第一阶段先不接（保留日志），等 Index 暴露 onSwitchTab 回调再接上。
-   */
+  /** 「更多发射」→ 切到「发射」tab（对位 goFeed → switchTab('/pages/index/index')） */
   private openLaunchList(): void {
-    this.logAction('打开发射列表（待宿主提供 onSwitchTab）', '');
+    this.logAction('更多发射 → 发射 tab', '');
+    this.requestTab(TAB_LAUNCH);
   }
 
   private openHistory(item: OnThisDayItem): void {
@@ -608,8 +661,7 @@ export struct TodayView {
 
   /**
    * 资讯详情：把列表里那条新闻整条摊进入参，详情页就不再拉一次全量 news.json。
-   * 小程序侧因未配业务域名，web-view 打不开、只能「复制链接」；鸿蒙侧同理没有内置浏览器，
-   * 所以详情页不提供「打开原文」，只提供复制。
+   * 鸿蒙侧没有内置浏览器，详情页只提供复制链接，不提供「打开原文」。
    */
   private openNews(item: NewsItem): void {
     const p: ArticleNavParam = new ArticleNavParam();
@@ -622,7 +674,7 @@ export struct TodayView {
     p.site = strOf(item.site);
     p.url = strOf(item.url);
     p.at = strOf(item.at);
-    // launchRefs 在 NewsItem 里是可选的，这里给空数组兜底，详情页就能直接判 length
+    // launchRefs 在 NewsItem 里是可选的，给空数组兜底，详情页就能直接判 length
     const refs: NewsLaunchRef[] | undefined = item.launchRefs;
     p.launchRefs = refs !== undefined && refs !== null ? refs : [];
     Nav.pushArticle(p);
@@ -632,26 +684,190 @@ export struct TodayView {
     Nav.pushNewsList();
   }
 
+  // ============ 交互：刷新与触底 ============
+
+  /** 空态的「重新加载」与下拉刷新走同一条路：七路全 force */
+  private reload(): void {
+    this.loadAll(true);
+  }
+
+  private onRefresh(): void {
+    this.refreshing = true;
+    this.loadAll(true);
+  }
+
+  /**
+   * 触底（对位 onReachBottom → news.loadMore()）。
+   *
+   * 只发信号不自增条数：NewsSection 才知道步长与上限，它自己夹到 list.length。
+   * 到底之后继续触底也无害（expand 里已到底则不动）。
+   */
+  private onReachBottom(): void {
+    this.newsGrow = this.newsGrow + 1;
+  }
+
   // ============ UI ============
 
-  /** 顶部日期行：19vp Bold 白 + 11vp 灰副标题（与 LaunchView / GalleryView 的页头同档） */
+  /**
+   * 顶部日期行。
+   * 小程序 .nav-row 里只有这一行 .nav-date（38rpx/600），没有副标题 ——
+   * 之前多出的「每日一览 · 下次发射 · 往期回顾」是自创，已删。
+   * padding-right 180rpx 是给微信胶囊让位，鸿蒙没有胶囊，故不留。
+   */
   @Builder
   dateRow() {
-    Column() {
-      Text(this.today)
-        .fontSize(19)
-        .fontWeight(FontWeight.Bold)
-        .fontColor('#FFFFFF')
-        .letterSpacing(0.5)
+    Text(this.today)
+      .fontSize(19) // 38rpx ÷ 2
+      .fontWeight(FontWeight.Bold)
+      .fontColor('#FFFFFF')
+      .letterSpacing(0.5) // 1rpx ÷ 2
+      .width('100%')
+      .textAlign(TextAlign.Start)
+      .padding({ top: 12, bottom: 12 })
+  }
 
-      Text(this.loading ? '正在加载今日数据…' : '每日一览 · 下次发射 · 往期回顾')
-        .fontSize(11)
+  /**
+   * 整页空态（today.vue:165-173）。
+   * 文案随 loading 变；转圈期间不画按钮，避免点了重复请求。
+   */
+  @Builder
+  emptyBlock() {
+    Column() {
+      Text('🛰️')
+        .fontSize(36) // 72rpx ÷ 2
+        .margin({ bottom: 10 }) // 20rpx ÷ 2
+
+      Text(this.loading ? '正在拉取今日数据…' : '今天的数据还没准备好')
+        .fontSize(13) // 26rpx ÷ 2
         .fontColor('#6B7891')
-        .margin({ top: 4 })
+        .lineHeight(21) // 1.6 倍
+        .textAlign(TextAlign.Center)
+
+      if (!this.loading) {
+        Row() {
+          Text('重新加载')
+            .fontSize(13)
+            .fontWeight(FontWeight.Medium)
+            .fontColor('#0A0E17')
+        }
+        .padding({ left: 24, right: 24, top: 8, bottom: 8 }) // 48rpx / 16rpx
+        .backgroundColor('#38BDF8')
+        .borderRadius(20) // 40rpx ÷ 2
+        .margin({ top: 14 }) // 28rpx ÷ 2
+        .onClick(() => {
+          this.reload();
+        })
+      }
     }
     .width('100%')
-    .alignItems(HorizontalAlign.Start)
-    .padding({ top: 12, bottom: 12 })
+    .padding({ top: 80, bottom: 80, left: 20, right: 20 })
+    .alignItems(HorizontalAlign.Center)
+  }
+
+  /** 底部让位块：胶囊浮在列表之上，留一块空白比给 List 加 padding-bottom 可靠 */
+  @Builder
+  bottomSpacer() {
+    Column().width('100%').height(BOTTOM_PAD)
+  }
+
+  /**
+   * 内容区。
+   *
+   * 用 List 而不是 Scroll：onReachEnd 是 List 的原生能力（工程里 GalleryGrid /
+   * LaunchView / RocketView 都这么用），Scroll 上没有先例、签名也没处查（本机没装 SDK）。
+   * 每块内容一个 ListItem，等价于原来的纵向 Column 堆叠。
+   */
+  @Builder
+  contentList() {
+    List({ space: 0 }) {
+      ListItem() {
+        this.dateRow()
+      }
+
+      // 每日一览三卡（组件内部空数组即不渲染，不会留空壳）
+      ListItem() {
+        DailyCards({
+          cards: this.dailyCards,
+          onOpen: (item: DailyCardItem) => {
+            this.openDailyCard(item);
+          },
+          onMore: (item: DailyCardItem) => {
+            this.openDailyMore(item);
+          }
+        })
+      }
+
+      // 下次发射：组件自带「下次发射」标题，取不到时自己出占位块
+      ListItem() {
+        NextLaunch({
+          item: this.nextLaunch(),
+          more: true,
+          onSelect: (item: LaunchSummary) => {
+            this.openLaunch(item);
+          },
+          onMore: () => {
+            this.openLaunchList();
+          }
+        })
+      }
+
+      // 往年今日：自带标题 / 条数 / 折叠入口，空列表整块不渲染（对位 v-if="otd.length"）
+      ListItem() {
+        OnThisDay({
+          list: this.otd,
+          onSelect: (item: OnThisDayItem) => {
+            this.openHistory(item);
+          }
+        })
+      }
+
+      // 此刻在天上：空名单整块高度 0，不占位
+      ListItem() {
+        InSpaceRow({
+          list: this.astronauts,
+          onSelect: (item: AstronautCard) => {
+            Nav.pushAstronaut(new AstronautNavParam(String(item.id), strOf(item.name)));
+          }
+        })
+      }
+
+      // 航天资讯：组件只露前 limit 条，「查看全部资讯 ›」跳资讯列表，
+      // 触底由上面的 onReachEnd 发信号让它再露一批
+      ListItem() {
+        NewsSection({
+          list: this.news,
+          limit: NEWS_LIMIT,
+          loading: this.loading,
+          growSignal: this.newsGrow,
+          onOpen: (item: NewsItem) => {
+            this.openNews(item);
+          },
+          onViewAll: () => {
+            this.openNewsList();
+          }
+        })
+      }
+
+      // 四路全空 → 整页空态（位置在最后，与小程序 DOM 顺序一致）
+      if (this.isEmpty()) {
+        ListItem() {
+          this.emptyBlock()
+        }
+      }
+
+      ListItem() {
+        this.bottomSpacer()
+      }
+    }
+    .width('100%')
+    .height('100%')
+    .padding({ left: PAGE_PAD, right: PAGE_PAD })
+    .scrollBar(BarState.Off)
+    .edgeEffect(EdgeEffect.Spring)
+    .cachedCount(2)
+    .onReachEnd(() => {
+      this.onReachBottom();
+    })
   }
 
   build() {
@@ -659,72 +875,15 @@ export struct TodayView {
       // 1 星空底层：绝对定位铺满、不参与命中测试，必须作为 Stack 的第一个子节点
       StarField()
 
-      // 2 内容层
-      Scroll(this.scroller) {
-        Column() {
-          this.dateRow()
-
-          // 每日一览三卡（组件内部空数组即不渲染，不会留空壳）
-          DailyCards({
-            cards: this.dailyCards,
-            onOpen: (item: DailyCardItem) => {
-              this.openDailyCard(item);
-            },
-            onMore: (item: DailyCardItem) => {
-              this.openDailyMore(item);
-            }
-          })
-
-          // 下次发射：component 自带「下次发射」标题，取不到时自己出占位块
-          NextLaunch({
-            item: this.nextLaunch(),
-            more: true,
-            onSelect: (item: LaunchSummary) => {
-              this.openLaunch(item);
-            },
-            onMore: () => {
-              this.openLaunchList();
-            }
-          })
-
-          // 往年今日：自带标题 / 条数 / 折叠，空列表出空态块
-          OnThisDay({
-            list: this.otd,
-            onSelect: (item: OnThisDayItem) => {
-              this.openHistory(item);
-            }
-          })
-
-          // 此刻在天上：空名单整块高度 0，不占位
-          // 点某位在轨航天员 → 详情页。id 是 number，统一 String() 一次再进路由
-          InSpaceRow({
-            list: this.astronauts,
-            onSelect: (item: AstronautCard) => {
-              Nav.pushAstronaut(new AstronautNavParam(String(item.id), strOf(item.name)));
-            }
-          })
-
-          // 航天资讯：组件只露前 limit 条，「查看全部 ›」回调给宿主
-          NewsSection({
-            list: this.news,
-            limit: NEWS_LIMIT,
-            onOpen: (item: NewsItem) => {
-              this.openNews(item);
-            },
-            onViewAll: () => {
-              this.openNewsList();
-            }
-          })
-        }
-        .width('100%')
-        // 左右 12vp 页面内边距 + 底部 92vp 胶囊让位
-        .padding({ left: PAGE_PAD, right: PAGE_PAD, bottom: BOTTOM_PAD })
+      // 2 内容层：Refresh 包住滚动容器，对位小程序的 enablePullDownRefresh
+      Refresh({ refreshing: $$this.refreshing }) {
+        this.contentList()
       }
       .width('100%')
       .height('100%')
-      .align(Alignment.Top)
-      .scrollBar(BarState.Off)
-      .edgeEffect(EdgeEffect.Spring)
+      .onRefreshing(() => {
+        this.onRefresh();
+      })
     }
     .width('100%')
     .height('100%')

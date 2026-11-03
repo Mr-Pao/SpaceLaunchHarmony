@@ -38,10 +38,12 @@
 
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { BusinessError } from '@kit.BasicServicesKit';
+import { common } from '@kit.AbilityKit';
 import { repo, LoadOptions } from '../data/Repository';
 import { strOf } from '../utils/Format';
 import { Nav } from '../routes/Nav';
 import { PhotoNavParam } from '../routes/NavParam';
+import { rocketFavInit, rocketFavHas, rocketFavToggle, MvRocketFav } from '../data/RocketFavorites';
 
 const DOMAIN: number = 0x0000;
 const TAG: string = 'RocketDetailView';
@@ -60,6 +62,8 @@ const TEXT_DIM: string = '#55617A';
 const ACCENT: string = '#38BDF8';
 const ACTIVE_GREEN: string = '#34C759';
 const RETIRED_GRAY: string = '#55617A';
+/** 收藏星标的金色（与 LaunchDetailView 的 STAR 同值） */
+const STAR_YELLOW: string = '#F5C33B';
 
 /** Hero 高度（任务书 200vp） */
 const HERO_H: number = 200;
@@ -234,12 +238,28 @@ export struct RocketDetailView {
   /** 参数格（已按「值无效就跳过」过滤，两列成行） */
   @State specs: RkSpecRow[] = [];
 
+  /**
+   * 是否已收藏这个型号。
+   *
+   * 为什么加这个星标：MineView 的「收藏的火箭」清单已经做完（读 RocketFavorites），
+   * 但全工程没有写入方 —— 详情页不给星标，那份清单永远是空的，等于白做。
+   * 小程序那边 rocket.vue 也没有星标（它只在发射详情页收藏），这里是鸿蒙侧的
+   * 补齐：既然清单已经能读能删，就该给一个「加进去」的入口。
+   */
+  @State faved: boolean = false;
+
   /** 滚动容器 */
   private scroller: Scroller = new Scroller();
 
   // ============ 生命周期 ============
 
   aboutToAppear(): void {
+    // preferences 需要 Context，这是首个拿得到它的时机（与 LaunchDetailView 同口径）
+    const ctx: common.Context | undefined = this.getUIContext().getHostContext();
+    if (ctx !== undefined) {
+      rocketFavInit(ctx);
+    }
+    this.syncFaved();
     this.loadLauncher(false);
   }
 
@@ -352,6 +372,11 @@ export struct RocketDetailView {
     this.found = true;
     this.loading = false;
     this.failed = false;
+
+    // 定位成功、name 归一化之后重读一次星标：aboutToAppear 那一刻 name 还是空的，
+    // 那时读的是路由入参的名字。两份名字在绝大多数情况下相同，但归一化过的
+    // 才是清单里能点回来的那个键，所以这里必须以它为准。
+    this.syncFaved();
   }
 
   // ============ 数值格式化 ============
@@ -548,6 +573,37 @@ export struct RocketDetailView {
     Nav.pop();
   }
 
+  /** 从存储层同步一次星标状态。键是型号名（RocketNavParam 的唯一入参）。 */
+  private syncFaved(): void {
+    this.faved = rocketFavHas(this.nameKey());
+  }
+
+  /**
+   * 收藏用的键。
+   *
+   * 为什么不直接用 this.rocketName：它是路由入参，可能在 launchers 里还没定位到时
+   * 就点了星标。this.name 是定位成功后归一化的名字，二者在绝大多数情况下相同，
+   * 但归一化过的那个才是「清单里能点回来」的那个，所以优先用它。
+   */
+  private nameKey(): string {
+    const n: string = strOf(this.name).trim();
+    return n.length > 0 ? n : strOf(this.rocketName).trim();
+  }
+
+  /** 顶栏星标点击。 */
+  private onTapFav(): void {
+    const key: string = this.nameKey();
+    if (key.length === 0) {
+      return;
+    }
+    const now: boolean = rocketFavToggle(new MvRocketFav(key, strOf(this.image).trim(), Date.now()));
+    this.faved = now;
+    this.getUIContext().getPromptAction().showToast({
+      message: now ? '已收藏' : '已取消收藏',
+      duration: 1500
+    });
+  }
+
   /** Hero 点击看大图；没图就什么都不做（不弹 toast 打扰） */
   private openPhoto(): void {
     if (this.image.length === 0 || this.imgErr) {
@@ -594,6 +650,18 @@ export struct RocketDetailView {
         .maxLines(1)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
         .layoutWeight(1)
+
+      // 收藏星标。只在定位到型号之后才可点 —— 没定位到时 nameKey() 是空串，
+      // 收藏进去也点不回来（清单按型号名反查）。
+      if (this.found) {
+        Text(this.faved ? '★' : '☆')
+          .fontSize(20)
+          .fontColor(this.faved ? STAR_YELLOW : TEXT_SUB)
+          .padding({ left: 10, top: 10, bottom: 10 })
+          .onClick(() => {
+            this.onTapFav();
+          })
+      }
     }
     .width('100%')
     .alignItems(VerticalAlign.Center)

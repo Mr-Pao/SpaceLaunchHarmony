@@ -27,7 +27,7 @@
  *   Navigation 包在 TabContent **里面**，不是外面，所以不违反这条。
  */
 
-import { TodayView } from '../view/TodayView';
+import { TodayView, TAB_REQUEST_KEY } from '../view/TodayView';
 import { LaunchView } from '../view/LaunchView';
 import { GalleryView } from '../view/GalleryView';
 import { RocketView } from '../view/RocketView';
@@ -53,6 +53,20 @@ struct Index {
   @StorageProp(NAV_DETAIL_DEPTH_KEY) detailDepth: number = 0;
 
   /**
+   * 「请求切 tab」广播。
+   *
+   * 动机：今日页的「更多发射 ›」要切到发射 tab（对位小程序 goFeed → switchTab），
+   * 但 TabsController 只在 Index 手里，子视图拿不到。工程里已有同类解法：
+   * Favorites 用 FAV_VERSION_KEY 写 AppStorage、页面用 @StorageProp + @Watch 接，
+   * 就是「不依赖导航时机」的那一套，这里照抄。
+   *
+   * 值是「序号 × 10 + tab 下标」，不是裸下标：@Watch 对同值不触发，
+   * 裸下标时连点两次同一个入口，第二次会被去重吞掉。
+   * 写方是 TodayView.TAB_REQUEST_KEY，取下标用 raw % 10。
+   */
+  @StorageProp(TAB_REQUEST_KEY) @Watch('onTabRequest') tabRequest: number = -1;
+
+  /**
    * 五个 tab 各自的路由栈。
    *
    * 用五个独立成员而不是 `@State stacks: NavPathStack[]`：
@@ -74,6 +88,30 @@ struct Index {
     Nav.current = this.stackToday;
     // 初始化层数，避免 @StorageProp 拿不到默认值
     AppStorage.setOrCreate(NAV_DETAIL_DEPTH_KEY, 0);
+    // -1 = 没有待处理的切 tab 请求；不初始化的话首帧可能读到 undefined
+    AppStorage.setOrCreate(TAB_REQUEST_KEY, -1);
+  }
+
+  /**
+   * 收到「切 tab」广播。
+   *
+   * @Watch 回调签名是 (propName: string) => void，形参必须留着。
+   * 真正切 tab 交给 TabsController.changeIndex —— 它会触发 Tabs 的 onChange，
+   * currentIndex 与 Nav.current 在那里面统一更新，这里不重复写。
+   * 0 与负数都当「无效值」跳过：0 是 -1 初始化后的近邻，误触发会莫名跳回今日页。
+   */
+  onTabRequest(propName: string): void {
+    const raw: number = this.tabRequest;
+    // 只判未初始化（-1）与非法值。刻意不写 `raw === undefined` ——
+    // raw 已声明成 number，和 undefined/null 比较会被 ArkTS 判为无意义比较。
+    if (raw < 0) {
+      return;
+    }
+    const index: number = raw % 10;
+    if (index <= 0 || index > 4) {
+      return;
+    }
+    this.tabsController.changeIndex(index);
   }
 
   /** 按索引取栈，供 onChange 同步 Nav.current */

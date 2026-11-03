@@ -1,113 +1,136 @@
 /**
- * view/MineView.ets —— 「我的」tab（按小程序 pages/mine/mine.vue 视觉重写）
+ * view/MineView.ets —— 「我的」tab（按小程序 pages/mine/mine.vue 逐段对齐）
  *
- * 视觉基准（小程序实测截图，1:1 复刻）：
- *   整页星空背景
- *   → 居中圆形火箭 logo（56vp，深蓝底 + 青色边）
- *   → 双色字标 Space / Launch（紧贴无空格）
- *   → 一句 tagline「记录人类成为多星球物种的进程」
- *   → 三格统计（数字 20vp Bold 白 / 标签 10vp 灰）
- *   → 虚线边框提示卡（☆ + 两行说明）
- *   → 分组标题「探索」+ 2×2 四宫格（图标 / 标题 / 副标题）
- *   → 分组标题「数据与设置」+ 四行功能卡（带 chevron）
- *   → 分组标题「关于」+ 版本 / 构建 / 数据来源
- *   → CC-BY 署名页脚
+ * 结构（与小程序同序，注释里标出对应的小程序选择器，方便复核）：
+ *   StarField 星空底（小程序 <star-field />）
+ *   → hero：辉光 + 76vp 圆形真图 logo + 双色字标 + 标语 + 三格统计（收藏 / 提醒 / 当前版本）
+ *   → 我的收藏（.rows 列表 + 右上「全部 ›」）
+ *   → 收藏的火箭（.rows 列表）
+ *   → 我的提醒（数据层尚未落地，见文件末「未做」说明）
+ *   → 三块全空时的青虚线引导卡（.tips）
+ *   → 探索（5 格，48.6% 百分宽）
+ *   → 数据与设置（鸿蒙增量，视觉按「关于」行对齐）
+ *   → 关于（4 行 + CC-BY 长注）
+ *   → 页脚一句
  *
- * 与小程序的**有意差异**（各条都说明为什么，不是偷懒）：
- *   1. 统计三格：小程序的「收藏 0 / 提醒 0 / 版本」在鸿蒙侧曾经是三个恒为 0 的
- *      假数字（收藏存储层尚未接入），留着只会误导。现在收藏已接入，第 3 格改回
- *      **真实收藏数**（favCount()），前两格保持真实可诊断的数据集数（FILES.size）
- *      与数据版本（DATA_VERSION）；缓存项数与缓存目录、占用一起放到下面那行小字里。
- *      提醒功能仍未接入，所以不出现「提醒」格 —— 不摆一个永远点不动的假入口。
- *   2. 虚线提示卡换了文案：小程序写「在详情页点『☆ 收藏』或『提醒』」。鸿蒙版现在
- *      收藏已实现、提醒没有，所以文案只讲收藏，并整卡可点直达收藏清单。
- *      卡片、图标、边框、字号全部保持一致。
- *   3. 四宫格点击跳到鸿蒙侧已实现的四个页面（StatsView / SpaceAssetsView /
- *      NeoView / EventsView），由 Index.ets 的 PageMap 分发、共用 Nav.pushBlank。
+ * 为什么整页没有「我的」标题：小程序 mine.vue:5-7 明确写了理由 ——
+ * 这一页只有一个 tab，标题只是重复；内容直接从状态栏下开始、整宽铺开，
+ * 才能和星空融成一片（沉浸感），而不是「一张浮起来的卡」。照抄。
  *
- * 为什么这一页也要星空：小程序「我的」页本来就有（与「今日」同款 160 颗星）。
- * 复用 components/StarField（不改它），按它文件头写的用法作为 Stack 第一个子节点。
- * 每个 tab 是独立 TabContent，各有一个 StarField 实例，互不干扰。
+ * 与小程序的差异全部是「鸿蒙侧能力边界」造成的，逐条列在这里：
+ *   1. 统计第三格用 currentVersion()（constants/Changelog.ets 末条版本），
+ *      小程序用 utils/changelog.js 的 current；两边语义完全一致。
+ *   2. 「我的收藏」右上多一个「全部 ›」。小程序没有这一行：它的清单就 5 条封顶、
+ *      也不存在收藏专页；鸿蒙有独立的 FavoritesView（还能长按删除），
+ *      不给门就等于把删除能力藏起来。这是**有意的功能增量**。
+ *   3. 「我的提醒」只统计、不渲染清单。鸿蒙侧没有任何「提醒」开关
+ *      （LaunchDetailView 顶栏只有 ☆ 收藏），preferences 里不可能出现数据；
+ *      为了不摆一个永远空的区块，这里沿用小程序「有数据才显示」的 v-if 规则 ——
+ *      区块自然不出现。计数仍从同一个 key 读，将来详情页接上开关就自动生效。
+ *   4. 没有「联系作者」。小程序用的是微信客服通道（<button open-type="contact">），
+ *      鸿蒙没有对应能力，也不该伪造一个点了没反应的入口 —— 直接不出现这一行。
+ *   5. 多一组「数据与设置」（数据结构说明 / 数据更新 / 清理缓存 / 关于）。
+ *      小程序靠微信清缓存、靠「关于」弹窗回答一切；鸿蒙是本地文件缓存，用户必须能
+ *      自己清、也必须能看见最后同步时间，否则弱网问题无从排查。视觉上刻意与
+ *      小程序「关于」分组用同一套行样式（14vp 标签 + 13vp 值 + 1vp 分割线），
+ *      让这组增量不像外来物。
  *
- * 数据来源（硬性义务）：发射与航天员数据来自 The Space Devs（LL2），
- * 卫星编目来自 Jonathan McDowell 的 GCAT（CC-BY 4.0，必须署名），图像来自 NASA。
- * 页脚小字与「数据结构说明 / 关于」两个弹窗是这条义务的落点，**不要删**。
+ * 关于 CC-BY 署名：小程序把它放在「关于」块下方的 .about-note 长注里（mine.vue:180），
+ * 这里**原样照抄那段文案**，义务没有丢；「数据结构说明」「关于」两个弹窗是第二处落点。
+ * 页脚只是小程序那一句「SpaceLaunch · 为航天爱好者而做」，不再重复署名。
  *
  * ⚠ 本文件不使用 console.*，日志一律 hilog。
  */
 
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { BusinessError } from '@kit.BasicServicesKit';
+import { preferences } from '@kit.ArkData';
+import { common } from '@kit.AbilityKit';
 import { repo, LoadOptions, DataSet, CacheStats } from '../data/Repository';
 import { fileStore } from '../data/FileStore';
-import { FILES, DATA_VERSION } from '../constants/Dataset';
-import { formatGeneratedAt } from '../utils/Format';
+import { formatGeneratedAt, formatShort, relativeTime } from '../utils/Format';
 import { StarField } from '../components/StarField';
-import { Nav, ROUTE_STATS, ROUTE_ASSETS, ROUTE_NEO, ROUTE_EVENTS, ROUTE_FAVORITES, ROUTE_VERSION, ROUTE_STATIONS } from '../routes/Nav';
-import { favInit, favCount, FAV_VERSION_KEY } from '../data/Favorites';
-import { common } from '@kit.AbilityKit';
+import {
+  Nav,
+  ROUTE_STATS,
+  ROUTE_ASSETS,
+  ROUTE_NEO,
+  ROUTE_EVENTS,
+  ROUTE_FAVORITES,
+  ROUTE_VERSION
+} from '../routes/Nav';
+import { LaunchNavParam, RocketNavParam } from '../routes/NavParam';
+import { favInit, favList, FavItem, FAV_VERSION_KEY } from '../data/Favorites';
+import { rocketFavInit, rocketFavList, MvRocketFav, RKF_VERSION_KEY } from '../data/RocketFavorites';
+import { currentVersion } from '../constants/Changelog';
 
 const DOMAIN: number = 0x0000;
 const TAG: string = 'MineView';
 
-/**
- * 版本号。
- *
- * **必须手动与 AppScope/app.json5 的 versionName 保持同步**。
- * 为什么不在运行时读：app.json5 是编译期配置，ArkTS 侧没有直接读它的 API；
- * 走 bundleManager 只能拿到 bundleName / versionCode，要拿 versionName 得
- * 按包名查 BundleInfo，页面里为此引一个系统能力不划算。当前值 '1.0.0'
- * 即 app.json5 的 versionName。
- */
-const APP_VERSION: string = '1.0.0';
+// ============ 配色（工程约定 + 小程序实测值） ============
 
-/**
- * 构建日期，同样手写。只到「日」：这一行的用途是回答「我装的是哪一版」，
- * 精确到秒没有意义，改版本号时顺手改这里。
- */
-const APP_BUILD: string = '2026-11-02';
-
-/** 配色（全站统一，与 TodayView / FloatingTabBar 同源） */
 const BG_PRIMARY: string = '#0A0E17';
 const CARD_BG: string = '#141A26';
-const TEXT_SECONDARY: string = '#A7B4C7';
-const TEXT_TERTIARY: string = '#55617A';
 const ACCENT: string = '#38BDF8';
-/** 收藏星色（与详情页顶栏星标同色，跨页一致） */
-const STAR: string = '#F5C33B';
-const DIVIDER_COLOR: string = '#1E2637';
-/** 提示卡虚线边框色（小程序 1px #2a3547） */
-const DASH_COLOR: string = '#2A3547';
-/** 提示卡正文色（小程序 #7a8598），比三级文字稍亮，保证 11vp 也读得清 */
-const TEXT_HINT: string = '#7A8598';
-/** 标签/副标题灰（小程序 #6b7891） */
+/** 字标里 Launch 的颜色，比全站强调色更偏青（小程序 #22d3ee） */
+const BRAND_CYAN: string = '#22D3EE';
+/** 字标青光：rgba(34,211,238,0.42) */
+const BRAND_CYAN_GLOW: string = '#6B22D3EE';
+/** 卡片描边 rgba(255,255,255,0.05) */
+const CARD_BORDER: string = '#0DFFFFFF';
+/** 卡片内分割线 rgba(255,255,255,0.045) */
+const ROW_DIVIDER: string = '#0BFFFFFF';
+/** 行标题 #e2e8f0 */
+const ROW_TITLE: string = '#E2E8F0';
+/** 行次要信息 / 标签 #6b7891 */
 const TEXT_LABEL: string = '#6B7891';
-/** 火箭 logo 底与边（小程序 #1a2a3a 深蓝 + 青色描边） */
-const LOGO_BG: string = '#1A2A3A';
-const LOGO_RING: string = '#6638BDF8';
+/** 引导卡正文 #7d8ba0（比三级文字亮一档） */
+const TEXT_HINT: string = '#7D8BA0';
+/** 探索格副标题 #5f6b80 */
+const TEXT_TILE_DESC: string = '#5F6B80';
+/** 行尾 chevron #3d4a5c */
+const ARROW: string = '#3D4A5C';
+/** 缩略图占位底 #0f1520 */
+const IMG_BG: string = '#0F1520';
+/** 引导卡底 rgba(56,189,248,0.05) */
+const TIPS_BG: string = '#0D38BDF8';
+/** 引导卡虚线 rgba(56,189,248,0.2) */
+const TIPS_BORDER: string = '#3338BDF8';
+/** 页脚 #35404f */
+const FOOTER_TEXT: string = '#35404F';
+/** CC-BY 长注 #4d596b */
+const NOTE_TEXT: string = '#4D596B';
+/** 辉光三档：0.26 / 0.07 / 0 */
+const GLOW_A: string = '#4238BDF8';
+const GLOW_B: string = '#1238BDF8';
+const GLOW_C: string = '#0038BDF8';
 
-/** 页面左右内边距 */
+// ============ 尺寸 ============
+
+/** 页面左右内边距（工程约定 16） */
 const PAGE_PAD: number = 16;
-/** logo 直径（小程序约 56vp） */
-const LOGO_SIZE: number = 56;
-/**
- * 四宫格卡高度。写死是为了同一行两张卡无论副标题长短都等高。
- * 112 是「图标行 + 标题行 + 两行副标题 + 上下内边距」的实测下限：
- * 再矮一行，emoji 22vp 与两行 10vp 副标题就会被压出边界。
- */
-const TILE_H: number = 112;
-
-/**
- * 底部内边距 92vp：让开悬浮胶囊。
- * 胶囊本体 58 + 底部留白 20 = 78，再留 14 给胶囊顶上那层渐变。
- */
+/** logo 直径：小程序 152rpx = 76vp */
+const LOGO_SIZE: number = 76;
+/** hero 辉光高度：小程序 620rpx = 310vp（宽度随屏幕，760rpx 已超过屏宽） */
+const HERO_GLOW_H: number = 310;
+/** 清单行缩略图：小程序 96rpx = 48vp */
+const ROW_IMG: number = 48;
+/** 每份清单最多露几条。小程序 SHOW_MAX = 5，理由同款：收藏几十条时这页会变成列表页 */
+const SHOW_MAX: number = 5;
+/** 探索格高度：ArkUI 的 Flex 换行不做 css 那种同行拉伸，给固定高保证 2×2 对齐 */
+const TILE_H: number = 108;
+/** 底部内边距 92vp：让开悬浮胶囊（胶囊 58 + 底留 20 + 顶部渐变 14） */
 const BOTTOM_PAD: number = 92;
-
+/** 构建日期，手写；改版本时顺手改这里 */
+const APP_BUILD: string = '2026-11-02';
 /**
- * 字节数 → 人读体积。
- * utils/Format.ets 是纯时间/文本格式化层，没有体积函数；而且只此一处用，
- * 放本地比往公共模块里塞一个专用函数干净。
+ * 提醒清单在 preferences 里的键名。
+ * 与小程序 mine.vue:198 的 REMIND_KEY 同名 —— 鸿蒙侧目前没有写入方，
+ * 这个 key 只用于「将来接上提醒开关后计数自动生效」，不是死代码。
  */
+const REMIND_KEY: string = 'reminded_launches';
+
+/** 字节数 → 人读体积（utils/Format.ets 是纯时间/文本层，没有体积函数） */
 function formatBytes(bytes: number): string {
   if (bytes <= 0) {
     return '0 B';
@@ -123,34 +146,15 @@ function formatBytes(bytes: number): string {
 }
 
 /**
- * 功能行描述。
- * 为什么用 class 而不是对象字面量：ArkTS 严格模式禁止无类型对象字面量，
- * 列表项必须有一个可 new 的类型。
- * 副标题**不放进这里** —— 它随状态变化，必须在 @Builder 内部现算，
- * 否则会踩「@Builder 按值传参不随状态刷新」的坑。
+ * 探索格的一格。
+ * ArkTS 禁无类型对象字面量，列表项必须可 new。
+ * 字段名避开 size / width / height / content 等内置属性名（同名会被内置成员遮蔽）。
  */
-class MnRow {
-  icon: string = '';
-  title: string = '';
-  key: string = '';
-
-  constructor(icon: string, title: string, key: string) {
-    this.icon = icon;
-    this.title = title;
-    this.key = key;
-  }
-}
-
-/**
- * 四宫格的一格。
- * 与 MnRow 同样必须显式建类：ArkTS 禁止无类型对象字面量。
- * 字段名刻意避开 size / width / height / content 等内置属性名（同名会被内置成员遮蔽）。
- */
-class MnTile {
+class MvTile {
   icon: string = '';
   title: string = '';
   desc: string = '';
-  /** 用于 toast 文案与将来跳转分发的稳定标识，不参与渲染 */
+  /** 跳转分发用的稳定标识，不参与渲染 */
   key: string = '';
 
   constructor(icon: string, title: string, desc: string, key: string) {
@@ -161,96 +165,180 @@ class MnTile {
   }
 }
 
+/** 「数据与设置」的一行 */
+class MvSettingRow {
+  title: string = '';
+  key: string = '';
+
+  constructor(title: string, key: string) {
+    this.title = title;
+    this.key = key;
+  }
+}
+
 @Component
 export struct MineView {
   // ============ 状态 ============
 
-  /** 最近一次数据同步的人读时间（来自 upcoming 的 generatedAt） */
-  @State lastSyncText: string = '尚未同步';
-  /** 是否正在拉数据（只影响「数据更新」那行的副标题） */
-  @State refreshing: boolean = false;
-  /** 磁盘上已缓存的数据集个数 */
-  @State cachedCount: number = 0;
-  /** 缓存占用字节数 */
-  @State cacheBytes: number = 0;
-  /** 缓存目录（FileStore 未初始化时为空串） */
-  @State cacheDir: string = '';
-  /**
-   * 收藏条数。
-   *
-   * 为什么不直接调 favCount() 当值用：@Builder 在渲染时求值，读不到变化；
-   * 必须是个 @State，改了才会重绘。
-   */
+  /** 已收藏的发射（最多 SHOW_MAX 条，供列表渲染） */
+  @State favItems: FavItem[] = [];
+  /** 收藏总数（清单可能被截断，头部「N 条」必须用真实总数） */
   @State favTotal: number = 0;
+  /** 已收藏的火箭型号（最多 SHOW_MAX 条） */
+  @State rocketItems: MvRocketFav[] = [];
+  @State rocketTotal: number = 0;
+  /** 提醒条数。今天恒为 0，理由见文件头「差异 3」 */
+  @State remindTotal: number = 0;
+  /** 最近一次数据同步的人读时间 */
+  @State lastSyncText: string = '尚未同步';
+  @State refreshing: boolean = false;
+  /** 磁盘缓存项数 / 字节 / 目录，供「数据与设置」两行显示 */
+  @State cachedCount: number = 0;
+  @State cacheBytes: number = 0;
+  @State cacheDir: string = '';
+
   /**
-   * 订阅收藏版本号（data/Favorites.ets 里每改一次收藏就 +1）。
+   * 订阅收藏版本号（data/Favorites.ets 每改一次 +1）。
    *
-   * **这是「从收藏页返回后数字不更新」的解**：本页在 TabContent 里是保活的，
-   * `aboutToAppear` 一辈子只跑一次；`onPageShow` 在 TabContent 里也不触发；
+   * **这是「从收藏页返回后数字不更新」的唯一解**：本页在 TabContent 里保活，
+   * aboutToAppear 一辈子只跑一次；onPageShow 在 TabContent 里不触发；
    * 收藏页压的是另一个 NavPathStack 的详情层，pop 回来不会重建本组件。
-   * 只有全局版本号能穿透这几种情况——不论用户是从收藏页删的、
-   * 还是在任意发射详情页点星标改的，数字都会跟着变。
+   * 只有全局版本号能穿透这几种情况。
    */
   @StorageProp(FAV_VERSION_KEY) @Watch('onFavChanged') favVersion: number = 0;
+  /**
+   * 火箭收藏用独立的版本键（data/RocketFavorites.ets）。
+   * 不复用收藏的键：两份清单在不同页面被改，共用一个键会让无关的刷新互相触发。
+   */
+  @StorageProp(RKF_VERSION_KEY) @Watch('onRkFavChanged') rkFavVersion: number = 0;
 
-  /** 四个功能行。key 是给 onRow 用的稳定标识，不参与渲染 */
-  private rows: MnRow[] = [
-    new MnRow('📖', '数据结构说明', 'data'),
-    new MnRow('🔄', '数据更新', 'refresh'),
-    new MnRow('🧹', '清理缓存', 'clear'),
-    new MnRow('ℹ️', '关于', 'about')
+  /** 提醒计数用的 preferences 句柄（与 Favorites 同名实例，互不干扰） */
+  private remindPrefs: preferences.Preferences | null = null;
+
+  /**
+   * 探索格。**与小程序 entries 完全一致的四格**。
+   *
+   * 曾加过第 5 格「空间站」，2026-11-03 按「逐页对齐小程序」的要求撤掉：
+   * 探索区是小程序最讲究的一屏（2×2 布局、每格 48.6% 宽），多一格会破成 2/2/1，
+   * 用户一眼就看出不是同一版。空间站入口改挂到「数据与设置」下 —— 那一组本来
+   * 就是鸿蒙侧的增量区，加一行不影响版式。
+   */
+  private tiles: MvTile[] = [
+    new MvTile('📊', '数据统计', '历年发射量', 'stats'),
+    new MvTile('🛰️', '太空资产', '在轨统计 · 卫星百科 · 解体再入', 'assets'),
+    new MvTile('☄️', '近地天体', '未来一周掠地日程', 'neo'),
+    new MvTile('📅', '近期活动', 'EVA · 轨道插入 · 飞掠', 'events')
   ];
 
-  /** 探索格。顺序即 1-2 / 3-4 / 5 的阅读顺序，前四格与小程序一致 */
-  private tiles: MnTile[] = [
-    new MnTile('📊', '数据统计', '历年发射量', 'stats'),
-    new MnTile('🛰️', '太空资产', '在轨统计·卫星百科·解体', 'assets'),
-    new MnTile('☄️', '近地天体', '未来一周掠地日程', 'neo'),
-    new MnTile('📅', '近期活动', 'EVA·轨道插入·飞船事件', 'events'),
-    // 第 5 格：空间站。
-    // 小程序那边空间站列表页**没有任何入口**（只有分享 path 能进来），
-    // 鸿蒙侧既然做完了列表与详情，就该有个门。放探索区而不是塞进「太空资产」，
-    // 因为太空资产已有三个 tab（在轨 / 卫星 / 解体），再叠一个会变成抽屉式套娃。
-    new MnTile('🏛️', '空间站', '在轨站 · 远征队 · 驻留', 'stations')
+  /**
+   * 「数据与设置」。key 是 onSetting 的稳定标识。
+   *
+   * 「空间站」放在这里：小程序那边空间站列表页没有任何入口（只有分享 path），
+   * 鸿蒙既然做完了列表与详情就该有个门；而这一组本来就是增量区，多一行不破版式。
+   */
+  private settings: MvSettingRow[] = [
+    new MvSettingRow('空间站', 'stations'),
+    new MvSettingRow('数据结构说明', 'data'),
+    new MvSettingRow('数据更新', 'refresh'),
+    new MvSettingRow('清理缓存', 'clear'),
+    new MvSettingRow('关于', 'about')
   ];
 
   // ============ 生命周期 ============
 
   aboutToAppear(): void {
-    // 收藏要显式初始化一次：preferences 需要 Context，而这里是首个拿得到
-    // `this.getUIContext()` 的时机（模块级没有 Context 可用）。
+    // preferences 需要 Context，而这里是首个拿得到 this.getUIContext() 的时机
+    // （模块级没有 Context 可用）。收藏与火箭收藏各自初始化，互不依赖。
     const ctx: common.Context | undefined = this.getUIContext().getHostContext();
     if (ctx !== undefined) {
       favInit(ctx);
+      rocketFavInit(ctx);
+      this.openRemindPrefs(ctx);
     }
-    this.readFavTotal();
+    this.reloadLists();
     this.refreshCacheInfo();
     this.loadLastSync(false);
   }
 
-  /**
-   * 收藏版本号变了就地重读，不重建组件也不依赖导航时机。
-   *
-   * 形参 `propName` 必须留着：@Watch 回调签名是 `(propName: string) => void`，
-   * 框架生成调用时总会传一个参数。
-   */
-  onFavChanged(propName: string): void {
-    this.readFavTotal();
+  /** 打开提醒计数用的 preferences。失败不抛：计数是装饰性的，坏了也不该白屏 */
+  private openRemindPrefs(ctx: common.Context): void {
+    try {
+      const opt: preferences.Options = { name: 'spacelaunch_prefs' };
+      this.remindPrefs = preferences.getPreferencesSync(ctx, opt);
+    } catch (e) {
+      hilog.warn(DOMAIN, TAG, '提醒计数用的 preferences 打开失败，按 0 处理');
+      this.remindPrefs = null;
+    }
   }
 
-  private readFavTotal(): void {
-    this.favTotal = favCount();
+  /**
+   * 收藏版本号变了就地重读。
+   *
+   * 形参 `propName` 必须留着：@Watch 回调签名是 `(propName: string) => void`。
+   */
+  onFavChanged(propName: string): void {
+    this.reloadLists();
+  }
+
+  onRkFavChanged(propName: string): void {
+    this.reloadLists();
   }
 
   // ============ 数据 ============
 
   /**
+   * 重读三份清单。
+   *
+   * 只取前 SHOW_MAX 条渲染、但总数用 length —— 小程序也是这个口径
+   * （计数按记录条数算，列表只露 5 条）。拉不到详情的收藏条目不占位这件事，
+   * 鸿蒙侧不存在：Favorites.ets 存的就是标题/时间/地点快照，不依赖数据源。
+   */
+  private reloadLists(): void {
+    const favs: FavItem[] = favList();
+    this.favTotal = favs.length;
+    this.favItems = favs.length > SHOW_MAX ? favs.slice(0, SHOW_MAX) : favs;
+
+    const rockets: MvRocketFav[] = rocketFavList();
+    this.rocketTotal = rockets.length;
+    this.rocketItems = rockets.length > SHOW_MAX ? rockets.slice(0, SHOW_MAX) : rockets;
+
+    this.readRemindCount();
+  }
+
+  /**
+   * 提醒条数。
+   *
+   * 小程序把提醒记在 `reminded_launches`（一个 id 数组）。鸿蒙侧目前没有写入方
+   * （详情页没有「提醒」按钮），所以这里必然读到空 —— 但**不去伪造一个别的 key**：
+   * 将来详情页接提醒开关时，只要沿用同名 key，这一格与清单就会自己活过来。
+   * 解析失败、非数组、空串一律按 0。
+   */
+  private readRemindCount(): void {
+    const p: preferences.Preferences | null = this.remindPrefs;
+    if (p === null) {
+      this.remindTotal = 0;
+      return;
+    }
+    try {
+      const raw: preferences.ValueType = p.getSync(REMIND_KEY, '');
+      if (typeof raw !== 'string' || raw.length === 0) {
+        this.remindTotal = 0;
+        return;
+      }
+      // JSON.parse 必须 as：ArkTS 不接受隐式 any
+      const arr: string[] = JSON.parse(raw) as string[];
+      this.remindTotal = arr.length;
+    } catch (e) {
+      this.remindTotal = 0;
+    }
+  }
+
+  /**
    * 读缓存现状。
    *
-   * 用 repo.stats() 而不是自己扫目录：stats() 已经把「内存条目 / 磁盘键 /
-   * 磁盘字节」一次算好，页面再拼一遍容易与数据层口径分叉。
-   * 缓存目录另取 fileStore.getDir() —— stats() 里没有它，而「缓存到底写在
-   * 哪」是用户排查时的第一个问题，必须给真实路径。
+   * 用 repo.stats() 而不是自己扫目录：stats() 已经把「内存条目 / 磁盘键 / 磁盘字节」
+   * 一次算好，页面再拼一遍容易与数据层口径分叉。缓存目录另取 fileStore.getDir()，
+   * 因为「缓存到底写在哪」是排查时的第一个问题，清理确认框里要给出真实路径。
    */
   private refreshCacheInfo(): void {
     const s: CacheStats = repo.stats();
@@ -262,9 +350,8 @@ export struct MineView {
   /**
    * 读上一次数据同步时间。
    *
-   * 有意「先 peek 后 load」：
-   *   peek() 只查内存 + 文件、绝不发网络请求，冷启动能立刻把上次时间亮出来；
-   *   随后 load() 走正常链路，命中过期缓存时由 onUpdate 回填新时间。
+   * 有意「先 peek 后 load」：peek() 只查内存 + 文件、不发网络请求，冷启动能立刻
+   * 亮出上次时间；随后 load() 走正常链路，命中过期缓存时由 onUpdate 回填。
    * 只认 load 的结果的话，弱网下这一行会长时间空白。
    */
   private loadLastSync(force: boolean): void {
@@ -306,34 +393,97 @@ export struct MineView {
     this.lastSyncText = shown.length > 0 ? shown : '尚未同步';
   }
 
+  // ============ 展示口径 ============
+
   /**
-   * 行副标题。
+   * 三格统计的值。
    *
-   * 刻意在 @Builder 渲染时调用，而不是算好了当参数传进去：
-   * @Builder 的多参是**按值传递**，状态变量变化不会引起 Builder 内 UI 刷新，
-   * 传字符串会让「占用 xx MB」「最后同步 xx」在清理/刷新后停留在旧值。
+   * 刻意在 @Builder 渲染时调用、而不是算好了当参数传进去：
+   * @Builder 的多参是**按值传递**，状态变量变化不会引起 Builder 内 UI 刷新。
    */
-  private subOf(key: string): string {
-    if (key === 'refresh') {
-      return this.refreshing ? '正在同步…' : '最后同步 ' + this.lastSyncText;
+  private statValue(index: number): string {
+    if (index === 0) {
+      return String(this.favTotal);
     }
-    if (key === 'clear') {
-      return '占用 ' + formatBytes(this.cacheBytes) + ' · 保留首屏数据';
+    if (index === 1) {
+      return String(this.remindTotal);
     }
-    if (key === 'about') {
-      return 'v' + APP_VERSION + ' · 构建 ' + APP_BUILD;
-    }
-    return 'The Space Devs · NASA · GCAT';
+    return currentVersion();
   }
 
-  /** 统一 toast 出口：本页只有「即将上线」「已释放 xx」两类轻提示 */
-  private toast(msg: string): void {
-    this.getUIContext().getPromptAction().showToast({ message: msg, duration: 2000 });
+  private statLabel(index: number): string {
+    if (index === 0) {
+      return '收藏';
+    }
+    if (index === 1) {
+      return '提醒';
+    }
+    return '当前版本';
+  }
+
+  /** 清单行标题：任务名优先；没有就退回火箭型号，再不济给一个诚实占位 */
+  private favTitle(item: FavItem): string {
+    if (item.title.length > 0) {
+      return item.title;
+    }
+    if (item.rocketName.length > 0) {
+      return item.rocketName;
+    }
+    return '未命名任务';
+  }
+
+  /**
+   * 清单行次要信息。
+   * 小程序口径（mine.vue:274-279）= 短时间 · 相对时间 · 状态；鸿蒙的 FavItem 没存
+   * 状态快照，改显示火箭型号（没有则场地）——「这次是什么火箭、在哪打」比
+   * 一行状态码对收藏列表更有用。
+   */
+  private favMeta(item: FavItem): string {
+    const parts: string[] = [];
+    const t: string = formatShort(item.net);
+    if (t.length > 0) {
+      parts.push(t);
+    }
+    const rel: string = relativeTime(item.net);
+    if (rel.length > 0 && rel !== t) {
+      parts.push(rel);
+    }
+    if (item.rocketName.length > 0) {
+      parts.push(item.rocketName);
+    } else if (item.siteName.length > 0) {
+      parts.push(item.siteName);
+    }
+    return parts.join(' · ');
+  }
+
+  /** 「数据与设置」行的右侧值。同样必须现算，理由同 statValue() */
+  private settingValue(key: string): string {
+    if (key === 'stations') {
+      return '15 座';
+    }
+    if (key === 'data') {
+      return '查看';
+    }
+    if (key === 'refresh') {
+      return this.refreshing ? '同步中…' : this.lastSyncText;
+    }
+    if (key === 'clear') {
+      return formatBytes(this.cacheBytes) + ' · ' + String(this.cachedCount) + ' 项';
+    }
+    return 'v' + currentVersion();
   }
 
   // ============ 交互 ============
 
-  private onRow(key: string): void {
+  private toast(msg: string): void {
+    this.getUIContext().getPromptAction().showToast({ message: msg, duration: 2000 });
+  }
+
+  private onSetting(key: string): void {
+    if (key === 'stations') {
+      Nav.pushStations();
+      return;
+    }
     if (key === 'data') {
       this.showDataSourceDialog();
       return;
@@ -353,14 +503,12 @@ export struct MineView {
   }
 
   /**
-   * 四宫格点击。
+   * 探索格点击。
    *
-   * 对位小程序 pages/stats / space-assets / neo / events 四页，
-   * 鸿蒙侧已各自实现为 view/StatsView、SpaceAssetsView、NeoView、EventsView，
-   * 由 Index.ets 的 PageMap 分发。前三页都无入参，所以共用 Nav.pushBlank。
-   *
-   * 空间站（stations）例外，走 Nav.pushStations()——虽然它也没有入参，
-   * 但它有自己的 push 方法，语义上比"任意空白页"更清楚，将来加筛选参数也不用改调用点。
+   * 对位小程序 pages/stats / space-assets / neo / events，鸿蒙侧各已实现，
+   * 由 Index.ets 的 PageMap 分发、共用 Nav.pushBlank。
+   * 空间站例外，走 Nav.pushStations()——虽然也没有入参，但它有自己的 push 方法，
+   * 语义比「任意空白页」清楚，将来加筛选参数不用改调用点。
    */
   private onTile(key: string): void {
     if (key === 'stats') {
@@ -375,7 +523,7 @@ export struct MineView {
       Nav.pushStations();
     } else {
       // key 只在内部产生、五值穷举，走到这里说明 tiles 数组被改漏了一项
-      hilog.warn(DOMAIN, TAG, '四宫格出现未知 key: %{public}s', key);
+      hilog.warn(DOMAIN, TAG, '探索格出现未知 key: %{public}s', key);
     }
   }
 
@@ -405,7 +553,7 @@ export struct MineView {
   private showAboutDialog(): void {
     AlertDialog.show({
       title: '关于 SpaceLaunch',
-      message: '版本 v' + APP_VERSION + '\n' +
+      message: '版本 v' + currentVersion() + '\n' +
         '构建 ' + APP_BUILD + '\n\n' +
         '数据来源：The Space Devs (LL2) · NASA · Jonathan McDowell (GCAT)\n\n' +
         '开源许可：应用代码 MIT；数据按各自来源许可使用 ——\n' +
@@ -423,16 +571,16 @@ export struct MineView {
   /**
    * 清理缓存。
    *
-   * 用 repo.vacuum(0) 而不是 repo.clearAll()：
-   * clearAll() 会把 upcoming（首页首屏）一起清掉，下次冷启动要白等一次网络；
-   * vacuum() 按 EVICT_ORDER 逐个删，并且**永不删 upcoming**，
-   * 正好是「清大件、保首屏」的语义。targetBytes = 0 表示按名单清到底。
+   * 用 repo.vacuum(0) 而不是 repo.clearAll()：clearAll() 会把 upcoming（首屏）
+   * 一起清掉，下次冷启动要白等一次网络；vacuum() 按 EVICT_ORDER 逐个删、
+   * 且**永不删 upcoming**，正好是「清大件、保首屏」的语义。
    */
   private showClearCacheDialog(): void {
-    const sizeText: string = formatBytes(this.cacheBytes);
     AlertDialog.show({
       title: '清理缓存',
-      message: '当前占用 ' + sizeText + '，共 ' + String(this.cachedCount) + ' 个数据集。\n\n' +
+      message: '当前占用 ' + formatBytes(this.cacheBytes) + '，共 ' +
+        String(this.cachedCount) + ' 个数据集。\n\n' +
+        '缓存目录：' + (this.cacheDir.length > 0 ? this.cacheDir : '尚未初始化') + '\n\n' +
         '将删除「即将发射」之外的本地数据集（火箭 / 宇航员 / 卫星目录等），\n' +
         '「即将发射」保留，首屏不受影响。\n' +
         '清理后再次浏览相关页面需要重新下载。',
@@ -452,7 +600,7 @@ export struct MineView {
     });
   }
 
-  /** 清理结果用 toast 而不是弹窗：这一步没有需要用户决策的信息，弹窗只是多一次点击 */
+  /** 清理结果用 toast 而不是弹窗：没有需要用户决策的信息，弹窗只是多一次点击 */
   private doVacuum(): void {
     const freed: number = repo.vacuum(0);
     this.refreshCacheInfo();
@@ -460,406 +608,580 @@ export struct MineView {
     this.toast(freed > 0 ? '已释放 ' + formatBytes(freed) : '没有可清理的缓存');
   }
 
-  // ============ UI ============
+  // ============ UI：hero ============
 
-  /** 居中火箭 logo：深蓝圆 + 青色描边 + emoji 火箭（media 里没有火箭图，emoji 跨设备最稳） */
+  /**
+   * hero 辉光（小程序 .hero-glow：760×620rpx 圆，中心在 50% / 46%）。
+   *
+   * ArkUI 没有 css 的 radial-gradient 语法，用容器自身的 radialGradient 表达：
+   * 三档透明度与 css 的 0% / 42% / 68% 停靠点一一对应。
+   * 宽度取 100%（小程序 760rpx 已经宽于 750rpx 屏，等价于「铺满并溢出」），
+   * 高度 310vp。纯装饰、不接事件 —— 否则会挡住 logo 的点击热区。
+   */
   @Builder
-  logoBadge() {
-    Stack({ alignContent: Alignment.Center }) {
-      Circle({ width: LOGO_SIZE, height: LOGO_SIZE })
-        .fill(LOGO_BG)
-        .stroke(LOGO_RING)
-        .strokeWidth(1)
-
-      Text('🚀')
-        .fontSize(26)
-    }
-    .width(LOGO_SIZE)
-    .height(LOGO_SIZE)
-  }
-
-  /** 身份区：logo + 双色字标 + tagline，整体居中（小程序同款） */
-  @Builder
-  heroBlock() {
-    Column() {
-      this.logoBadge()
-
-      // 双色字标：Space 白 + Launch 青。两个 Text 紧贴着排，中间不能留空格，
-      // 否则会露出一道缝（小程序侧同样踩过）
-      Row() {
-        Text('Space')
-          .fontSize(26)
-          .fontWeight(FontWeight.Bold)
-          .fontColor('#FFFFFF')
-        Text('Launch')
-          .fontSize(26)
-          .fontWeight(FontWeight.Bold)
-          .fontColor(ACCENT)
-      }
-      .margin({ top: 14 })
-
-      Text('记录人类成为多星球物种的进程')
-        .fontSize(11)
-        .fontColor(TEXT_LABEL)
-        .margin({ top: 8 })
-    }
-    .width('100%')
-    .alignItems(HorizontalAlign.Center)
-    .padding({ top: 16, bottom: 18 })
+  heroGlow() {
+    Column()
+      .width('100%')
+      .height(HERO_GLOW_H)
+      .radialGradient({
+        center: ['50%', '46%'],
+        radius: '58%',
+        colors: [[GLOW_A, 0.0], [GLOW_B, 0.42], [GLOW_C, 0.68]]
+      })
+      .hitTestBehavior(HitTestMode.None)
   }
 
   /**
-   * 三格统计的一格。
-   * 参数是 number 字面量（按值传入无副作用），动态值在内部现算，
-   * 理由同 subOf()：@Builder 按值传参会冻结状态。
+   * logo：小程序是 152×152rpx 的**真图片**（/static/logo.png），不是色块 + emoji。
+   * 鸿蒙 resources/base/media/app_icon.png 与那张图字节完全相同，直接用。
+   * 边框 rgba(56,189,248,0.3) 1vp：小程序 2rpx，用 1vp 是因为 2rpx 在 3x 屏上
+   * 会被抹成半像素、发虚。
    */
+  @Builder
+  logoBadge() {
+    Image($r('app.media.app_icon'))
+      .width(LOGO_SIZE)
+      .height(LOGO_SIZE)
+      .borderRadius(LOGO_SIZE / 2)
+      .border({ width: 1, color: '#4D38BDF8' })
+      .objectFit(ImageFit.Cover)
+  }
+
+  /** 身份区：辉光 + logo + 双色字标 + 标语 + 统计 */
+  @Builder
+  heroBlock() {
+    Stack({ alignContent: Alignment.Top }) {
+      this.heroGlow()
+
+      Column() {
+        this.logoBadge()
+
+        // 双色字标：Space 白 + Launch 青（#22d3ee + 青光）。
+        // 两个 Text 紧贴排，中间不能有空格/换行，否则会露出一道缝 ——
+        // 这也是小程序注释里专门写过的坑。
+        Row() {
+          Text('Space')
+            .fontSize(28)
+            // 小程序是 font-weight:900。ArkUI 的 FontWeight 枚举没有 900 这一档
+            // （Bolder 是「比父级更粗」的相对语义，父级 400 时只到 700），
+            // 所以直接传数值 —— TextStyle 的 fontWeight 接受 100~900。
+            .fontWeight(900)
+            .fontColor('#FFFFFF')
+            .letterSpacing(-0.5)
+          Text('Launch')
+            .fontSize(28)
+            .fontWeight(900)
+            .fontColor(BRAND_CYAN)
+            .letterSpacing(-0.5)
+            // 小程序 text-shadow 0 0 28rpx rgba(34,211,238,0.42) → 14vp 模糊、无偏移
+            .textShadow({ radius: 14, color: BRAND_CYAN_GLOW, offsetX: 0, offsetY: 0 })
+        }
+        .alignItems(VerticalAlign.Bottom)
+        .margin({ top: 13 })
+
+        Text('记录人类成为多星球物种的进程')
+          .fontSize(12)
+          .fontColor(TEXT_HINT)
+          .letterSpacing(0.5)
+          .margin({ top: 7 })
+
+        // 统计三格：收藏 / 提醒 / 当前版本。整行只有上分割线，没有卡片底 ——
+        // 小程序把这块当作 hero 的一部分，套一层卡就成了另一个组件。
+        Row() {
+          this.statCell(0)
+          this.statDivider()
+          this.statCell(1)
+          this.statDivider()
+          this.statCell(2)
+        }
+        .width('100%')
+        .alignItems(VerticalAlign.Center)
+        .margin({ top: 20 })
+        .padding({ top: 13, bottom: 15 })
+        // 只画上边一条：小程序 .stats 是 border-top，不是整圈卡片
+        .border({ width: { top: 1 }, color: '#0FFFFFFF' })
+      }
+      .width('100%')
+      .alignItems(HorizontalAlign.Center)
+      .padding({ top: 26, bottom: 20 })
+    }
+    .width('100%')
+  }
+
+  /** 三格统计的一格。参数是 number 字面量（按值传入无副作用），动态值内部现算 */
   @Builder
   statCell(index: number) {
     Column() {
-      // 三格分别是：数据集数 / 数据版本 / 收藏数。
-      // 收藏数放第三格是刻意的：它和收藏页是同一份数据，用户核对时一眼能对得上。
-      Text(index === 0 ? String(FILES.size) :
-        (index === 1 ? String(DATA_VERSION) : String(this.favTotal)))
-        .fontSize(20)
+      Text(this.statValue(index))
+        // 版本号比数字短不了多少，但用 16vp 与「20vp 数字」区分开（小程序 stat-ver 32rpx）
+        .fontSize(index === 2 ? 16 : 20)
         .fontWeight(FontWeight.Bold)
         .fontColor('#FFFFFF')
+        .maxLines(1)
 
-      Text(index === 0 ? '数据集' : (index === 1 ? '数据版本' : '收藏'))
-        .fontSize(10)
+      Text(this.statLabel(index))
+        .fontSize(11)
         .fontColor(TEXT_LABEL)
-        .margin({ top: 4 })
+        .margin({ top: 5 })
     }
     .layoutWeight(1)
     .alignItems(HorizontalAlign.Center)
   }
 
+  /** 统计格之间的竖线：1×23vp（小程序 .stat-line 1×46rpx） */
   @Builder
   statDivider() {
     Divider()
       .vertical(true)
-      .height(26)
+      .height(23)
       .strokeWidth(1)
-      .color(DIVIDER_COLOR)
+      .color('#12FFFFFF')
   }
 
-  /**
-   * 数据概览：三格统计 + 一行真实缓存目录。
-   *
-   * 三格给的是「数据面」的三个数（数据集 / 版本 / 收藏）；缓存项数与占用
-   * 这一行原本只在第三格里出现，现在挪到下面这行小字里 ——
-   * 这一页对用户的实用价值是「我装了多少数据、存在哪、占多大」，
-   * 三格数字换了也必须保住这三条信息，不能为了加收藏把它们挤掉。
-   */
-  @Builder
-  overviewBlock() {
-    Column() {
-      Row() {
-        // FILES.size 是数据层真实条目数（27），不写死数字
-        this.statCell(0)
-        this.statDivider()
-        this.statCell(1)
-        this.statDivider()
-        this.statCell(2)
-      }
-      .width('100%')
-      .alignItems(VerticalAlign.Center)
+  // ============ UI：清单 ============
 
-      // 真实路径（<filesDir>/dataCache/v{DATA_VERSION}/）+ 实际占用 + 缓存项数。
-      // 用户排查「缓存写在哪」就靠这一行，不给模糊说法。
-      // 缓存项数从第三格挪到这里，是因为第三格让给了收藏数（见 statCell 注释）。
-      Text((this.cacheDir.length > 0 ? this.cacheDir : '缓存目录尚未初始化') +
-        ' · ' + formatBytes(this.cacheBytes) + ' · ' + String(this.cachedCount) + ' 项')
-        .width('100%')
-        .fontSize(10)
-        .fontColor(TEXT_TERTIARY)
-        .lineHeight(15)
-        .margin({ top: 12 })
-        .maxLines(2)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
-    }
-    .width('100%')
-    .alignItems(HorizontalAlign.Start)
-    .padding({ top: 16, bottom: 14, left: 8, right: 8 })
-    .borderRadius(14)
-    .backgroundColor(CARD_BG)
-    .margin({ top: 4, bottom: 14 })
-  }
-
-  /**
-   * 虚线提示卡（小程序同款 1vp 虚线 #2A3547、圆角 12）。
-   *
-   * 文案与小程序不同，见文件头「有意差异 2」：小程序写「在详情页点『☆ 收藏』
-   * 或『提醒』」，鸿蒙版没有提醒功能，照抄就是骗用户去点不存在的东西。
-   * 现在收藏已真实可用，这张卡整块变成入口：点一下直达收藏清单。
-   * 视觉结构（☆ + 两行小字 + 虚线框）保持小程序原样。
-   */
+  /** 收藏行：48vp 缩略图（无图 🚀 占位）+ 两行标题 + 一行 meta + › */
   @Builder
-  hintCard() {
+  favRow(item: FavItem) {
     Row() {
-      Text(this.favTotal > 0 ? '★' : '☆')
-        .fontSize(18)
-        .fontColor(this.favTotal > 0 ? STAR : ACCENT)
-        .margin({ right: 10 })
+      if (item.image.length > 0) {
+        Image(item.image)
+          .width(ROW_IMG)
+          .height(ROW_IMG)
+          .borderRadius(7)
+          .objectFit(ImageFit.Cover)
+          .backgroundColor(IMG_BG)
+      } else {
+        Stack({ alignContent: Alignment.Center }) {
+          Text('🚀')
+            .fontSize(22)
+            .opacity(0.45)
+        }
+        .width(ROW_IMG)
+        .height(ROW_IMG)
+        .borderRadius(7)
+        .backgroundColor(IMG_BG)
+      }
 
       Column() {
-        Text('点这里查看收藏清单')
-          .fontSize(11)
-          .fontColor(TEXT_HINT)
-          .lineHeight(17)
-
-        Text(this.favTotal > 0
-          ? '已收藏 ' + String(this.favTotal) + ' 条发射，长按可移除'
-          : '在发射详情页点右上角 ☆ 就能收藏')
-          .fontSize(11)
-          .fontColor(TEXT_HINT)
-          .lineHeight(17)
-          .margin({ top: 2 })
-      }
-      .alignItems(HorizontalAlign.Start)
-      .layoutWeight(1)
-
-      // 右向箭头：暗示这张卡可点，不然虚线框看起来只是说明文字
-      Text('›')
-        .fontSize(18)
-        .fontColor(TEXT_TERTIARY)
-        .margin({ left: 8 })
-    }
-    .width('100%')
-    .alignItems(VerticalAlign.Top)
-    .padding({ top: 14, bottom: 14, left: 14, right: 14 })
-    .borderStyle(BorderStyle.Dashed)
-    .borderWidth(1)
-    .borderColor(DASH_COLOR)
-    .borderRadius(12)
-    .margin({ bottom: 20 })
-    .onClick(() => {
-      // 无入参页，走 pushBlank（与四宫格里的统计/资产/天体/活动同一门面）
-      Nav.pushBlank(ROUTE_FAVORITES);
-    })
-  }
-
-  /** 分组标题：15vp Bold 白（小程序「探索」「关于」同档） */
-  @Builder
-  groupTitle(title: string) {
-    Text(title)
-      .width('100%')
-      .fontSize(15)
-      .fontWeight(FontWeight.Bold)
-      .fontColor('#FFFFFF')
-      .margin({ top: 4, bottom: 10 })
-  }
-
-  /** 四宫格的一格：图标 / 标题 / 副标题，整块可点 */
-  @Builder
-  tileCell(index: number) {
-    Column() {
-      Text(this.tiles[index].icon)
-        .fontSize(22)
-
-      Text(this.tiles[index].title)
-        .fontSize(14)
-        .fontWeight(FontWeight.Bold)
-        .fontColor('#FFFFFF')
-        .margin({ top: 8 })
-
-      Text(this.tiles[index].desc)
-        .fontSize(10)
-        .fontColor(TEXT_TERTIARY)
-        .lineHeight(14)
-        .margin({ top: 4 })
-        .maxLines(2)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
-    }
-    // 只给高度不给宽度：宽度由 layoutWeight 在 Row 里均分，
-    // 同时写 width('100%') 会被 layoutWeight 覆盖，留着只是噪音
-    .height(TILE_H)
-    .layoutWeight(1)
-    .alignItems(HorizontalAlign.Start)
-    .justifyContent(FlexAlign.Start)
-    .padding({ left: 14, right: 12, top: 14, bottom: 12 })
-    .borderRadius(12)
-    .backgroundColor(CARD_BG)
-    .onClick(() => {
-      this.onTile(this.tiles[index].key);
-    })
-  }
-
-  /** 探索区：两行两列。Row 没有 flexWrap，直接两行写死（四格固定，不需要自适应） */
-  @Builder
-  exploreBlock() {
-    Column() {
-      Row({ space: 12 }) {
-        this.tileCell(0)
-        this.tileCell(1)
-      }
-      .width('100%')
-
-      Row({ space: 12 }) {
-        this.tileCell(2)
-        this.tileCell(3)
-      }
-      .width('100%')
-      .margin({ top: 12 })
-
-      // 第 5 格单独一行，右侧留同宽空气占位。
-      // 不用 Blank()：Blank 在 Row 里会吃掉全部剩余宽度，把格子挤成 0。
-      Row({ space: 12 }) {
-        this.tileCell(4)
-        Column()
-          .layoutWeight(1)
-      }
-      .width('100%')
-      .margin({ top: 12 })
-    }
-    .width('100%')
-    .alignItems(HorizontalAlign.Start)
-    .margin({ bottom: 20 })
-  }
-
-  /**
-   * 一行功能。
-   *
-   * 图标位用 emoji 文本：图标资源尚未配齐（见 FloatingTabBar 顶部说明），
-   * 此时 Image($r('app.media.ic_xxx')) 会因资源 id 不存在直接编译失败。
-   * 图标到位后把 Text(icon) 换成 Image 即可，布局不用动。
-   *
-   * 参数是 number 字面量（按值传递无副作用），动态文案在内部读 this 状态。
-   */
-  @Builder
-  rowCell(index: number) {
-    Row() {
-      Text(this.rows[index].icon)
-        .fontSize(16)
-        .width(24)
-        .textAlign(TextAlign.Center)
-
-      Column() {
-        Text(this.rows[index].title)
+        Text(this.favTitle(item))
+          .width('100%')
           .fontSize(14)
-          .fontColor('#FFFFFF')
+          .fontWeight(FontWeight.Medium)
+          .fontColor(ROW_TITLE)
+          .lineHeight(20)
+          .maxLines(2)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
 
-        Text(this.subOf(this.rows[index].key))
-          .fontSize(10)
-          .fontColor(TEXT_TERTIARY)
-          .margin({ top: 3 })
+        Text(this.favMeta(item))
+          .width('100%')
+          .fontSize(11)
+          .fontColor(TEXT_LABEL)
+          .margin({ top: 4 })
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
       }
       .alignItems(HorizontalAlign.Start)
       .layoutWeight(1)
-      .margin({ left: 10 })
+      .margin({ left: 9, right: 9 })
+      // 不裁切的话，长任务名会把 arrow 顶出卡片
+      .clip(true)
 
       Text('›')
-        .fontSize(18)
-        .fontColor(TEXT_TERTIARY)
+        .fontSize(16)
+        .fontColor(ARROW)
     }
     .width('100%')
-    .padding({ top: 14, bottom: 14 })
     .alignItems(VerticalAlign.Center)
+    .padding({ top: 10, bottom: 10, left: 12, right: 12 })
     .onClick(() => {
-      this.onRow(this.rows[index].key);
+      // 用收藏时存下的 net/title 直接进详情，不依赖本地缓存里有没有这条
+      Nav.pushLaunch(new LaunchNavParam(item.id, item.net, item.title));
     })
   }
 
-  /** 功能行组：一张卡里排四行，行间 1px 分割线 */
+  /** 火箭收藏行：与收藏行同构，第二行固定「运载火箭」（小程序同款） */
   @Builder
-  actionCard() {
-    Column() {
-      this.rowCell(0)
-      Divider().strokeWidth(1).color(DIVIDER_COLOR)
-      this.rowCell(1)
-      Divider().strokeWidth(1).color(DIVIDER_COLOR)
-      this.rowCell(2)
-      Divider().strokeWidth(1).color(DIVIDER_COLOR)
-      this.rowCell(3)
+  rocketRow(item: MvRocketFav) {
+    Row() {
+      if (item.image.length > 0) {
+        Image(item.image)
+          .width(ROW_IMG)
+          .height(ROW_IMG)
+          .borderRadius(7)
+          .objectFit(ImageFit.Cover)
+          .backgroundColor(IMG_BG)
+      } else {
+        Stack({ alignContent: Alignment.Center }) {
+          Text('🚀')
+            .fontSize(22)
+            .opacity(0.45)
+        }
+        .width(ROW_IMG)
+        .height(ROW_IMG)
+        .borderRadius(7)
+        .backgroundColor(IMG_BG)
+      }
+
+      Column() {
+        Text(item.name)
+          .width('100%')
+          .fontSize(14)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(ROW_TITLE)
+          .lineHeight(20)
+          .maxLines(2)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+        Text('运载火箭')
+          .width('100%')
+          .fontSize(11)
+          .fontColor(TEXT_LABEL)
+          .margin({ top: 4 })
+          .maxLines(1)
+      }
+      .alignItems(HorizontalAlign.Start)
+      .layoutWeight(1)
+      .margin({ left: 9, right: 9 })
+      .clip(true)
+
+      Text('›')
+        .fontSize(16)
+        .fontColor(ARROW)
     }
     .width('100%')
-    .padding({ left: 16, right: 16 })
-    .borderRadius(14)
-    .backgroundColor(CARD_BG)
-    .margin({ bottom: 20 })
+    .alignItems(VerticalAlign.Center)
+    .padding({ top: 10, bottom: 10, left: 12, right: 12 })
+    .onClick(() => {
+      Nav.pushRocket(new RocketNavParam(item.name));
+    })
   }
 
-  /** 关于卡：版本 / 构建 / 数据来源，比弹窗更适合长读（弹窗只留给「关于」行的详情） */
+  /** 「我的收藏」整块 */
   @Builder
-  aboutCard() {
+  favoriteBlock() {
     Column() {
+      // 头部：小程序只有「N 条」；这里多一个「全部 ›」直达 FavoritesView
+      // （鸿蒙独有的删除能力得有门，见文件头差异 2）
       Row() {
-        Text('版本')
+        Text('我的收藏')
+          .fontSize(17)
+          .fontWeight(FontWeight.Medium)
+          .fontColor('#FFFFFF')
+          .letterSpacing(0.5)
+
+        Column().layoutWeight(1)
+
+        Text(String(this.favTotal) + ' 条')
           .fontSize(12)
-          .fontColor(TEXT_TERTIARY)
-          .layoutWeight(1)
-        Text('v' + APP_VERSION)
+          .fontColor(TEXT_LABEL)
+
+        Text('全部 ›')
           .fontSize(12)
-          .fontColor(TEXT_SECONDARY)
-        Text('›')
-          .fontSize(14)
-          .fontColor(TEXT_TERTIARY)
-          .margin({ left: 6 })
+          .fontColor(ACCENT)
+          .margin({ left: 10 })
+          .onClick(() => {
+            Nav.pushBlank(ROUTE_FAVORITES);
+          })
       }
       .width('100%')
-      // 版本行整行可点 → 版本记录页。小程序这里也是「版本记录」独立页，
-      // 但入口在「我的 → 关于」分组里单独一行；鸿蒙侧版本号直接就是入口，
-      // 少一行、语义一样（点版本号看版本记录是通用直觉）。
-      .onClick(() => {
-        Nav.pushBlank(ROUTE_VERSION);
-      })
+      .alignItems(VerticalAlign.Bottom)
+      .margin({ bottom: 10 })
 
-      Row() {
-        Text('构建')
-          .fontSize(12)
-          .fontColor(TEXT_TERTIARY)
-          .layoutWeight(1)
-        Text(APP_BUILD)
-          .fontSize(12)
-          .fontColor(TEXT_SECONDARY)
+      Column() {
+        ForEach(this.favItems, (item: FavItem) => {
+          this.favRow(item)
+        }, (item: FavItem) => 'f' + item.id + '_' + item.savedAt)
       }
       .width('100%')
-      .margin({ top: 8 })
-
-      Divider()
-        .strokeWidth(1)
-        .color(DIVIDER_COLOR)
-        .margin({ top: 12, bottom: 10 })
-
-      Text('数据来源')
-        .fontSize(12)
-        .fontColor(TEXT_TERTIARY)
-
-      Text('发射与活动：The Space Devs · Launch Library 2 (LL2)\n' +
-        '卫星编目：Jonathan McDowell · GCAT（CC-BY 4.0）\n' +
-        '图像：NASA（APOD / EPIC / Image Library）')
-        .width('100%')
-        .fontSize(11)
-        .fontColor(TEXT_SECONDARY)
-        .lineHeight(17)
-        .margin({ top: 5 })
+      .backgroundColor(CARD_BG)
+      .borderRadius(11)
+      .border({ width: 1, color: CARD_BORDER })
+      // 小程序靠 overflow:hidden 把首尾行的直角裁掉；ArkUI 用 clip
+      .clip(true)
     }
     .width('100%')
     .alignItems(HorizontalAlign.Start)
-    .padding(16)
-    .borderRadius(14)
-    .backgroundColor(CARD_BG)
-    .margin({ bottom: 14 })
+    .margin({ top: 22 })
   }
 
-  /** CC-BY 署名页脚 —— 项目硬性义务，任何重构都不要删这几行（原文不得改写） */
+  /** 「收藏的火箭」整块 */
   @Builder
-  creditFooter() {
+  rocketBlock() {
     Column() {
-      Text('发射与航天员数据 © The Space Devs (LL2) · 卫星目录 © Jonathan McDowell (CC-BY) · 图像 © NASA')
-        .fontSize(10)
-        .fontColor(TEXT_TERTIARY)
-        .lineHeight(16)
-        .textAlign(TextAlign.Center)
+      // 头部直接写在这里、不抽成带参 @Builder：@Builder 的多参按值传递，
+      // 「N 个型号」这种跟着 @State 变的文案必须在不带参的 Builder 里直读 this，
+      // 否则火箭收藏数变化时头部不会刷新（body 刷新而标题停在旧值）。
+      Row() {
+        Text('收藏的火箭')
+          .fontSize(17)
+          .fontWeight(FontWeight.Medium)
+          .fontColor('#FFFFFF')
+          .letterSpacing(0.5)
 
-      Text('SpaceLaunch · 为航天爱好者而做')
-        .fontSize(9)
-        .fontColor('#3E4860')
-        .margin({ top: 8 })
+        // 不能用 Blank()：它在 Row 里会吃掉全部剩余宽度把右侧文字挤成 0
+        Column().layoutWeight(1)
+
+        Text(String(this.rocketTotal) + ' 个型号')
+          .fontSize(12)
+          .fontColor(TEXT_LABEL)
+      }
+      .width('100%')
+      .alignItems(VerticalAlign.Bottom)
+      .margin({ bottom: 10 })
+
+      Column() {
+        ForEach(this.rocketItems, (item: MvRocketFav) => {
+          this.rocketRow(item)
+        }, (item: MvRocketFav) => 'rk' + item.name)
+      }
+      .width('100%')
+      .backgroundColor(CARD_BG)
+      .borderRadius(11)
+      .border({ width: 1, color: CARD_BORDER })
+      .clip(true)
     }
     .width('100%')
-    .padding({ left: 8, right: 8, top: 4, bottom: 8 })
+    .alignItems(HorizontalAlign.Start)
+    .margin({ top: 22 })
+  }
+
+  /**
+   * 空态引导卡（小程序 .tips）。
+   *
+   * 与小程序的旧实现相反：**不可点、无箭头、青虚线**。原来那版是一整张可点卡片、
+   * 带 › 直达收藏页 —— 那是「收藏功能刚上线、没有入口」时的权宜；现在清单本身
+   * 就是入口，再让一张说明卡抢戏反而混乱。
+   */
+  @Builder
+  tipsCard() {
+    Row() {
+      Text('☆')
+        .fontSize(17)
+        .fontColor(ACCENT)
+        .margin({ right: 8 })
+
+      Text('在详情页点「☆ 收藏」或「提醒」，你的清单会出现在这里')
+        .fontSize(12)
+        .fontColor(TEXT_HINT)
+        .lineHeight(19)
+        .layoutWeight(1)
+    }
+    .width('100%')
+    .alignItems(VerticalAlign.Center)
+    .padding({ top: 15, bottom: 15, left: 14, right: 14 })
+    .backgroundColor(TIPS_BG)
+    .border({ width: 1, color: TIPS_BORDER, style: BorderStyle.Dashed })
+    .borderRadius(10)
+    .margin({ top: 17 })
+  }
+
+  // ============ UI：探索 ============
+
+  /** 分组标题（小程序 .block-title-standalone 17vp/600） */
+  @Builder
+  sectionTitle(title: string) {
+    Text(title)
+      .width('100%')
+      .fontSize(17)
+      .fontWeight(FontWeight.Medium)
+      .fontColor('#FFFFFF')
+      .letterSpacing(0.5)
+      .margin({ top: 22, bottom: 10 })
+  }
+
+  /**
+   * 探索格的一格。
+   *
+   * 小程序 .cell：width 48.6%、padding 26/24rpx、圆角 20rpx、**有 1rpx 白 5% 描边**。
+   * （任务书差异 9 写「无 border」，但 mine.vue:673 明确写着 border，以源码为准。）
+   * 高度写死 108vp：ArkUI 的 Flex 换行不做 css align-items:stretch 那种同行拉伸，
+   * 不写死的话「在轨统计 · 卫星百科 · 解体再入」换行后两张卡就差一截。
+   */
+  @Builder
+  tileCell(t: MvTile) {
+    Column() {
+      Text(t.icon)
+        .fontSize(19)
+        .lineHeight(19)
+
+      Text(t.title)
+        .fontSize(14)
+        .fontWeight(FontWeight.Medium)
+        .fontColor(ROW_TITLE)
+        .margin({ top: 8 })
+        .maxLines(1)
+
+      Text(t.desc)
+        .fontSize(11)
+        .fontColor(TEXT_TILE_DESC)
+        .lineHeight(16)
+        .margin({ top: 3 })
+        .maxLines(2)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+    }
+    .width('48.6%')
+    .height(TILE_H)
+    .alignItems(HorizontalAlign.Start)
+    .padding({ top: 13, bottom: 13, left: 12, right: 12 })
+    .backgroundColor(CARD_BG)
+    .borderRadius(10)
+    .border({ width: 1, color: CARD_BORDER })
+    .margin({ bottom: 9 })
+    .onClick(() => {
+      this.onTile(t.key);
+    })
+  }
+
+  /** 探索区：Flex 换行 + space-between，5 格自然排成 2/2/1 */
+  @Builder
+  exploreBlock() {
+    Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.SpaceBetween, alignItems: ItemAlign.Start }) {
+      ForEach(this.tiles, (t: MvTile) => {
+        this.tileCell(t)
+      }, (t: MvTile) => t.key)
+    }
+    .width('100%')
+  }
+
+  // ============ UI：数据与设置 ============
+
+  /** 一行设置。样式与「关于」行完全一致，让这组鸿蒙增量看着不像外来物 */
+  @Builder
+  settingRow(index: number) {
+    Row() {
+      Text(this.settings[index].title)
+        .fontSize(14)
+        .fontColor(ROW_TITLE)
+        .layoutWeight(1)
+
+      Text(this.settingValue(this.settings[index].key))
+        .fontSize(13)
+        .fontColor(TEXT_LABEL)
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        // 值可能很长（最后同步时间）但只有这一行可挤，留出 chevron 的位置
+        .layoutWeight(1)
+        .textAlign(TextAlign.End)
+
+      Text('›')
+        .fontSize(16)
+        .fontColor(ARROW)
+        .margin({ left: 6 })
+    }
+    .width('100%')
+    .alignItems(VerticalAlign.Center)
+    .padding({ top: 14, bottom: 14, left: 13, right: 13 })
+    .onClick(() => {
+      this.onSetting(this.settings[index].key);
+    })
+  }
+
+  @Builder
+  settingCard() {
+    Column() {
+      this.settingRow(0)
+      Divider().strokeWidth(1).color(ROW_DIVIDER).margin({ left: 13, right: 13 })
+      this.settingRow(1)
+      Divider().strokeWidth(1).color(ROW_DIVIDER).margin({ left: 13, right: 13 })
+      this.settingRow(2)
+      Divider().strokeWidth(1).color(ROW_DIVIDER).margin({ left: 13, right: 13 })
+      this.settingRow(3)
+    }
+    .width('100%')
+    .backgroundColor(CARD_BG)
+    .borderRadius(11)
+    .border({ width: 1, color: CARD_BORDER })
+    .clip(true)
+    .margin({ bottom: 20 })
+  }
+
+  // ============ UI：关于 ============
+
+  /**
+   * 关于块的一行。
+   * `action` 只有 'version' 会真的跳转（版本记录页）；其余行传空串，
+   * 点击不做任何事 —— ArkTS 不能条件挂 onClick，所以在回调里判空。
+   */
+  @Builder
+  aboutRow(label: string, value: string, arrow: boolean, action: string) {
+    Row() {
+      Text(label)
+        .fontSize(14)
+        .fontColor(ROW_TITLE)
+        .layoutWeight(1)
+
+      Text(value)
+        .fontSize(13)
+        .fontColor(TEXT_LABEL)
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+      if (arrow) {
+        Text('›')
+          .fontSize(16)
+          .fontColor(ARROW)
+          .margin({ left: 6 })
+      }
+    }
+    .width('100%')
+    .alignItems(VerticalAlign.Center)
+    .padding({ top: 14, bottom: 14, left: 13, right: 13 })
+    .onClick(() => {
+      if (action === 'version') {
+        Nav.pushBlank(ROUTE_VERSION);
+      }
+    })
+  }
+
+  /**
+   * 关于块：小程序 5 行减去「联系作者」。
+   * 少的那一行不是漏做：小程序用 <button open-type="contact"> 走微信客服，
+   * 鸿蒙没有这条通道，做一个点了没反应的「发消息」比不做更糟。
+   */
+  @Builder
+  aboutBlock() {
+    Column() {
+      Column() {
+        this.aboutRow('版本记录', currentVersion(), true, 'version')
+        Divider().strokeWidth(1).color(ROW_DIVIDER).margin({ left: 13, right: 13 })
+        this.aboutRow('数据来源', 'The Space Devs', false, '')
+        Divider().strokeWidth(1).color(ROW_DIVIDER).margin({ left: 13, right: 13 })
+        this.aboutRow('卫星编目', 'GCAT', false, '')
+        Divider().strokeWidth(1).color(ROW_DIVIDER).margin({ left: 13, right: 13 })
+        this.aboutRow('同步频率', '每日自动', false, '')
+      }
+      .width('100%')
+      .backgroundColor(CARD_BG)
+      .borderRadius(11)
+      .border({ width: 1, color: CARD_BORDER })
+      .clip(true)
+
+      // CC-BY 署名（文案与小程序 mine.vue:180 完全一致，是义务不是装饰）
+      Text('发射与活动数据来自 Launch Library 2 API，活动信息以官方发布为准。' +
+        '卫星编目与在轨资产统计数据来自 GCAT (J. McDowell, planet4589.org/space/gcat)，' +
+        '采用 CC-BY 授权。')
+        .width('100%')
+        .fontSize(11)
+        .fontColor(NOTE_TEXT)
+        .lineHeight(19)
+        .margin({ top: 9 })
+    }
+    .width('100%')
+    .alignItems(HorizontalAlign.Start)
+    .margin({ bottom: 20 })
+  }
+
+  /** 页脚：小程序只有这一句（署名已在关于块的长注里，不重复） */
+  @Builder
+  footerLine() {
+    Text('SpaceLaunch · 为航天爱好者而做')
+      .width('100%')
+      .fontSize(11)
+      .fontColor(FOOTER_TEXT)
+      .letterSpacing(0.5)
+      .textAlign(TextAlign.Center)
+      .margin({ top: 8, bottom: 8 })
   }
 
   build() {
@@ -871,19 +1193,31 @@ export struct MineView {
       Scroll() {
         Column() {
           this.heroBlock()
-          this.overviewBlock()
-          this.hintCard()
 
-          this.groupTitle('探索')
+          // 三块清单都按「有数据才显示」——与小程序 v-if 一致，不给空区块占位。
+          // 提醒目前只进统计、不渲染清单（见文件头差异 3），所以这里只判两块。
+          if (this.favItems.length > 0) {
+            this.favoriteBlock()
+          }
+          if (this.rocketItems.length > 0) {
+            this.rocketBlock()
+          }
+          // 引导卡的判定只看「页面上一块清单都没有」。不把 remindTotal 算进来：
+          // 提醒这一块没有渲染体，算进来会造出「没清单、也没引导卡，页面空一块」的死角。
+          if (this.favItems.length === 0 && this.rocketItems.length === 0) {
+            this.tipsCard()
+          }
+
+          this.sectionTitle('探索')
           this.exploreBlock()
 
-          this.groupTitle('数据与设置')
-          this.actionCard()
+          this.sectionTitle('数据与设置')
+          this.settingCard()
 
-          this.groupTitle('关于')
-          this.aboutCard()
+          this.sectionTitle('关于')
+          this.aboutBlock()
 
-          this.creditFooter()
+          this.footerLine()
         }
         .width('100%')
         // 左右 16 + 底部 92vp 胶囊让位
